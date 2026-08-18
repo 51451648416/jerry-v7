@@ -34,6 +34,9 @@ import {
   BarChart3,
   ArrowUpRight,
   Hash,
+  Clock,
+  Square,
+  Zap,
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import {
@@ -56,7 +59,13 @@ import {
 import {
   LearnedModelParameters,
   CapturedDatasetRecord,
+  Direction,
 } from "../types";
+import {
+  globalAutoTrainingCollector,
+  AutoCollectionState,
+  AutoCollectionConfig,
+} from "../services/autoTrainingCollector";
 import {
   getApiConfig,
   saveApiConfig,
@@ -114,6 +123,23 @@ export default function AdminAdvancedSettingsModal({
   const [statusNotice, setStatusNotice] = useState<{ msg: string; type: "success" | "error" } | null>(null);
   const [isTraining, setIsTraining] = useState(false);
 
+  // 定時自動取樣與連續在線訓練狀態 (限後台)
+  const [autoCollectorState, setAutoCollectorState] = useState<AutoCollectionState>(
+    globalAutoTrainingCollector.getState()
+  );
+  const [autoIntervalSec, setAutoIntervalSec] = useState<number>(
+    autoCollectorState.config.intervalSec || 60
+  );
+  const [autoDurationMin, setAutoDurationMin] = useState<number>(
+    autoCollectorState.config.durationMinutes || 120
+  );
+  const [autoTargetDir, setAutoTargetDir] = useState<"BOTH" | "S" | "N">(
+    autoCollectorState.config.targetDirection || "BOTH"
+  );
+  const [autoTrainAfterCapture, setAutoTrainAfterCapture] = useState<boolean>(
+    autoCollectorState.config.autoTrainAfterCapture !== false
+  );
+
   const reloadData = () => {
     setIsAuth(isAdminAuthenticated());
     setDataset(getStoredDataset());
@@ -123,7 +149,28 @@ export default function AdminAdvancedSettingsModal({
     setTdxClientSecret(localStorage.getItem("TDX_CLIENT_SECRET") || "");
     setApiConfig(getApiConfig());
     setTestApiResult(null);
+    setAutoCollectorState(globalAutoTrainingCollector.getState());
   };
+
+  useEffect(() => {
+    // 訂閱定時取樣引擎狀態
+    const unsubscribe = globalAutoTrainingCollector.subscribe((newState) => {
+      setAutoCollectorState(newState);
+    });
+
+    const handleDatasetUpdated = () => {
+      setDataset(getStoredDataset());
+      setLearnedParams(getLearnedParameters());
+      onDataChanged?.();
+    };
+
+    window.addEventListener("hsuehshan-dataset-updated", handleDatasetUpdated);
+
+    return () => {
+      unsubscribe();
+      window.removeEventListener("hsuehshan-dataset-updated", handleDatasetUpdated);
+    };
+  }, [onDataChanged]);
 
   useEffect(() => {
     if (isOpen) {
@@ -197,7 +244,60 @@ export default function AdminAdvancedSettingsModal({
     );
   };
 
-  // 2. 機器學習模型訓練與變更 (Model Training Actions)
+  // 2. 機器學習模型訓練與自動定時取樣 (Model Training & Auto Sampling Actions)
+  const handleStartAutoCollector = () => {
+    const validInterval = Math.max(10, Number(autoIntervalSec) || 60);
+    const validDuration = Math.max(0, Number(autoDurationMin) || 0);
+
+    executeGuardedAction(
+      "啟動定時自動取樣與在線訓練 (限後台)",
+      `此動作將在後台自動每 ${validInterval} 秒向 TDX 抓取一次真實路況並寫入資料庫，持續 ${
+        validDuration > 0 ? `${validDuration} 分鐘` : "不限時間（直到電腦關閉或手動停止）"
+      }。`,
+      () => {
+        globalAutoTrainingCollector.start({
+          intervalSec: validInterval,
+          durationMinutes: validDuration,
+          targetDirection: autoTargetDir,
+          autoTrainAfterCapture: autoTrainAfterCapture,
+        });
+        showNotice(
+          `✓ 已成功啟動定時自動取樣：每 ${validInterval} 秒寫入一筆，電腦不關將持續在線採集與訓練！`
+        );
+      }
+    );
+  };
+
+  const handleStopAutoCollector = () => {
+    executeGuardedAction(
+      "停止定時自動取樣 (限後台)",
+      "此動作將終止背景定時寫入與在線微調任務。",
+      () => {
+        globalAutoTrainingCollector.stop();
+        showNotice("✓ 已停止定時自動取樣與連續在線訓練任務。");
+      }
+    );
+  };
+
+  const handleSingleCaptureNow = async () => {
+    executeGuardedAction(
+      "立即單次取樣寫入 1 筆 (限後台)",
+      "此動作將立即抓取一筆即時 TDX 數據、執行空間微元積分並寫入資料庫。",
+      async () => {
+        showNotice("正在連線 TDX 執行即時單次取樣...");
+        const res = await globalAutoTrainingCollector.executeSingleSamplingStep();
+        if (res.success) {
+          showNotice(`✓ 成功手動取樣並寫入 1 筆紀錄 (ID: ${res.recordId})！`);
+          setDataset(getStoredDataset());
+          setLearnedParams(getLearnedParameters());
+          onDataChanged?.();
+        } else {
+          showNotice(`✕ 取樣失敗：${res.message}`, "error");
+        }
+      }
+    );
+  };
+
   const handleRunTraining = async () => {
     executeGuardedAction(
       "執行機器學習 10 Epochs 訓練",
@@ -656,101 +756,366 @@ export default function AdminAdvancedSettingsModal({
 
             {/* TAB 2: 機器學習與模型微調 (進階設定) */}
             {activeTab === "model" && (
-              <div className="space-y-5">
-                <div className="bg-slate-950/80 p-4 rounded-2xl border border-slate-800 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
-                  <div>
-                    <h3 className="text-sm font-bold text-white flex items-center gap-2">
-                      <Cpu className="h-4 w-4 text-emerald-400" />
-                      <span>車道切換與流態機器學習調校</span>
-                    </h3>
-                    <p className="text-xs text-slate-400 mt-0.5">
-                      使用資料庫梯度下降在線優化車道切換收益門檻 (ΔT_switch) 與跨車道剪力耦合。
-                    </p>
-                  </div>
+              <div className="space-y-6">
+                {/* 核心區塊 1: 自動連續取樣與在線訓練控制台 (限後台) */}
+                <div className="bg-gradient-to-br from-slate-950 via-slate-900 to-emerald-950/40 p-5 rounded-3xl border-2 border-emerald-500/30 space-y-5 shadow-xl">
+                  {/* 頂部狀態列 */}
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-slate-800">
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className="text-[11px] font-mono uppercase px-2.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-400/30">
+                          AUTO DATASET SAMPLER & ONLINE ML
+                        </span>
+                        <span className={`px-2.5 py-0.5 rounded-full text-[11px] font-bold flex items-center gap-1.5 ${
+                          autoCollectorState.isRunning
+                            ? "bg-emerald-500 text-slate-950 animate-pulse"
+                            : "bg-slate-800 text-slate-400"
+                        }`}>
+                          <span className={`w-2 h-2 rounded-full ${autoCollectorState.isRunning ? "bg-slate-950" : "bg-slate-500"}`} />
+                          {autoCollectorState.isRunning ? "🟢 自動取樣訓練中 (電腦不關)" : "⏸ 自動取樣未啟動"}
+                        </span>
+                      </div>
+                      <h3 className="text-base font-black text-white mt-1 flex items-center gap-2">
+                        <Cpu className="h-5 w-5 text-emerald-400" />
+                        <span>定時自動寫入資料庫與連續在線訓練 (限後台)</span>
+                      </h3>
+                      <p className="text-xs text-slate-400 mt-0.5">
+                        自訂採集頻率與持續時間，後台自動定時向 TDX 抓取真實路況並寫入資料庫，同時連續微調機器學習參數。
+                      </p>
+                    </div>
 
-                  <div className="flex items-center gap-2">
-                    <button
-                      onClick={handleRunTraining}
-                      disabled={isTraining}
-                      className={`px-4 py-2 rounded-xl font-bold text-xs flex items-center gap-2 transition cursor-pointer ${
-                        isTraining
-                          ? "bg-slate-800 text-slate-400 cursor-not-allowed"
-                          : "bg-emerald-500 hover:bg-emerald-400 text-slate-950"
-                      }`}
-                    >
-                      {isTraining ? (
+                    {/* 即時運行統計摘要 */}
+                    <div className="flex flex-wrap items-center gap-2 text-xs font-mono">
+                      {autoCollectorState.isRunning ? (
                         <>
-                          <RotateCcw className="h-4 w-4 animate-spin" />
-                          <span>訓練中...</span>
+                          <div className="bg-slate-900/90 border border-emerald-500/40 px-3 py-2 rounded-xl">
+                            <span className="text-[10px] text-slate-400 block font-sans">下次寫入倒數</span>
+                            <span className="text-emerald-400 font-bold text-sm">
+                              ⏳ {autoCollectorState.nextCountdownSec} 秒
+                            </span>
+                          </div>
+                          <div className="bg-slate-900/90 border border-slate-700 px-3 py-2 rounded-xl">
+                            <span className="text-[10px] text-slate-400 block font-sans">已持續時間</span>
+                            <span className="text-white font-bold text-sm">
+                              {Math.floor(autoCollectorState.elapsedSec / 60)} 分 {autoCollectorState.elapsedSec % 60} 秒
+                            </span>
+                          </div>
+                          <div className="bg-slate-900/90 border border-slate-700 px-3 py-2 rounded-xl">
+                            <span className="text-[10px] text-slate-400 block font-sans">本次寫入</span>
+                            <span className="text-amber-300 font-bold text-sm">
+                              +{autoCollectorState.totalCapturedInSession} 筆
+                            </span>
+                          </div>
                         </>
                       ) : (
-                        <>
-                          <Play className="h-4 w-4 fill-current" />
-                          <span>執行 10 Epochs 微調 (限後台)</span>
-                        </>
+                        <div className="bg-slate-900/90 border border-slate-800 px-3 py-2 rounded-xl text-slate-400 text-xs">
+                          資料庫現有：<strong className="text-white font-bold">{dataset.length}</strong> / 500 筆
+                        </div>
                       )}
-                    </button>
+                    </div>
+                  </div>
 
-                    <button
-                      onClick={handleResetModelBaseline}
-                      className="px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-bold flex items-center gap-1.5 transition cursor-pointer"
-                      title="重設模型為物理基準"
-                    >
-                      <RotateCcw className="h-4 w-4" />
-                      <span>重設基準</span>
-                    </button>
+                  {/* 參數設定網格 */}
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
+                    {/* 1. 多久寫入一筆 (取樣頻率) */}
+                    <div className="bg-slate-950/80 p-4 rounded-2xl border border-slate-800 space-y-3">
+                      <div className="flex items-center justify-between">
+                        <label className="font-bold text-slate-300 flex items-center gap-1.5">
+                          <Clock className="h-4 w-4 text-amber-400" />
+                          <span>1. 多久寫入一筆 (取樣頻率)：</span>
+                        </label>
+                        <span className="text-emerald-400 font-mono font-bold">{autoIntervalSec} 秒 / 筆</span>
+                      </div>
+
+                      {/* 快捷按鈕 */}
+                      <div className="flex flex-wrap gap-1.5">
+                        {[15, 30, 60, 120, 300, 600].map((sec) => (
+                          <button
+                            key={sec}
+                            disabled={autoCollectorState.isRunning}
+                            onClick={() => setAutoIntervalSec(sec)}
+                            className={`px-2.5 py-1 rounded-lg text-xs font-mono transition cursor-pointer ${
+                              autoIntervalSec === sec
+                                ? "bg-emerald-500 text-slate-950 font-bold"
+                                : "bg-slate-900 hover:bg-slate-800 text-slate-400 hover:text-white border border-slate-800"
+                            } ${autoCollectorState.isRunning ? "opacity-50 cursor-not-allowed" : ""}`}
+                          >
+                            {sec < 60 ? `${sec}秒` : `${sec / 60}分`}
+                          </button>
+                        ))}
+                      </div>
+
+                      {/* 自訂秒數輸入 */}
+                      <div className="flex items-center gap-2 pt-1">
+                        <span className="text-slate-400 text-[11px]">自訂秒數：</span>
+                        <input
+                          type="number"
+                          min="10"
+                          max="3600"
+                          disabled={autoCollectorState.isRunning}
+                          value={autoIntervalSec}
+                          onChange={(e) => setAutoIntervalSec(Math.max(10, Number(e.target.value)))}
+                          className="bg-slate-900 border border-slate-700 rounded-xl px-3 py-1.5 text-white font-mono text-xs w-28 focus:border-emerald-500 focus:outline-hidden disabled:opacity-50"
+                        />
+                        <span className="text-[11px] text-slate-500">秒 (最低 10 秒)</span>
+                      </div>
+                    </div>
+
+                    {/* 2. 持續多久 (總運行時長) */}
+                    <div className="bg-slate-950/80 p-4 rounded-2xl border border-slate-800 space-y-3">
+                      <div className="flex items-center justify-between">
+                        <label className="font-bold text-slate-300 flex items-center gap-1.5">
+                          <Activity className="h-4 w-4 text-cyan-400" />
+                          <span>2. 持續多久 (運行時長)：</span>
+                        </label>
+                        <span className="text-cyan-400 font-mono font-bold">
+                          {autoDurationMin > 0 ? `${autoDurationMin} 分鐘` : "♾️ 不限時間 (持續運行)"}
+                        </span>
+                      </div>
+
+                      {/* 快捷按鈕 */}
+                      <div className="flex flex-wrap gap-1.5">
+                        {[
+                          { min: 30, label: "30分" },
+                          { min: 60, label: "1小時" },
+                          { min: 120, label: "2小時" },
+                          { min: 240, label: "4小時" },
+                          { min: 480, label: "8小時" },
+                          { min: 1440, label: "24小時" },
+                          { min: 0, label: "♾️ 不限時間" },
+                        ].map((item) => (
+                          <button
+                            key={item.min}
+                            disabled={autoCollectorState.isRunning}
+                            onClick={() => setAutoDurationMin(item.min)}
+                            className={`px-2.5 py-1 rounded-lg text-xs font-mono transition cursor-pointer ${
+                              autoDurationMin === item.min
+                                ? "bg-cyan-500 text-slate-950 font-bold"
+                                : "bg-slate-900 hover:bg-slate-800 text-slate-400 hover:text-white border border-slate-800"
+                            } ${autoCollectorState.isRunning ? "opacity-50 cursor-not-allowed" : ""}`}
+                          >
+                            {item.label}
+                          </button>
+                        ))}
+                      </div>
+
+                      {/* 自訂分鐘輸入 */}
+                      <div className="flex items-center gap-2 pt-1">
+                        <span className="text-slate-400 text-[11px]">自訂分鐘：</span>
+                        <input
+                          type="number"
+                          min="0"
+                          max="10080"
+                          disabled={autoCollectorState.isRunning}
+                          value={autoDurationMin}
+                          onChange={(e) => setAutoDurationMin(Math.max(0, Number(e.target.value)))}
+                          className="bg-slate-900 border border-slate-700 rounded-xl px-3 py-1.5 text-white font-mono text-xs w-28 focus:border-cyan-500 focus:outline-hidden disabled:opacity-50"
+                        />
+                        <span className="text-[11px] text-slate-500">分鐘 (設為 0 代表不限時間)</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* 方向與在線微調選項 */}
+                  <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 bg-slate-950/60 p-3.5 rounded-2xl border border-slate-800/80 text-xs">
+                    <div className="flex flex-wrap items-center gap-4">
+                      <div className="flex items-center gap-2">
+                        <span className="text-slate-400 font-bold">採集方向：</span>
+                        <select
+                          disabled={autoCollectorState.isRunning}
+                          value={autoTargetDir}
+                          onChange={(e) => setAutoTargetDir(e.target.value as any)}
+                          className="bg-slate-900 text-white border border-slate-700 rounded-xl px-3 py-1.5 font-bold focus:border-emerald-500 focus:outline-hidden disabled:opacity-50"
+                        >
+                          <option value="BOTH">雙向輪流 (南下/北上交替採集，推薦)</option>
+                          <option value="S">僅南下 0K → 54K (往宜蘭)</option>
+                          <option value="N">僅北上 54K → 0K (往台北)</option>
+                        </select>
+                      </div>
+
+                      <label className="flex items-center gap-2 text-slate-300 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          disabled={autoCollectorState.isRunning}
+                          checked={autoTrainAfterCapture}
+                          onChange={(e) => setAutoTrainAfterCapture(e.target.checked)}
+                          className="rounded-sm border-slate-700 text-emerald-500 focus:ring-emerald-400"
+                        />
+                        <span>每次寫入後自動執行 5 Epochs 梯度下降在線微調</span>
+                      </label>
+                    </div>
+
+                    {/* 主執行控制按鈕 */}
+                    <div className="flex items-center gap-2 w-full sm:w-auto">
+                      {!autoCollectorState.isRunning ? (
+                        <button
+                          onClick={handleStartAutoCollector}
+                          className="flex-1 sm:flex-initial px-5 py-2.5 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-400 hover:from-emerald-400 hover:to-teal-300 text-slate-950 font-black text-xs sm:text-sm flex items-center justify-center gap-2 transition shadow-lg shadow-emerald-500/20 cursor-pointer"
+                        >
+                          <Play className="h-4 w-4 fill-current" />
+                          <span>▶ 啟動定時自動取樣 (限後台)</span>
+                        </button>
+                      ) : (
+                        <button
+                          onClick={handleStopAutoCollector}
+                          className="flex-1 sm:flex-initial px-5 py-2.5 rounded-xl bg-rose-600 hover:bg-rose-500 text-white font-black text-xs sm:text-sm flex items-center justify-center gap-2 transition shadow-lg shadow-rose-600/30 cursor-pointer"
+                        >
+                          <Square className="h-4 w-4 fill-current" />
+                          <span>⏹ 停止定時自動取樣</span>
+                        </button>
+                      )}
+
+                      <button
+                        onClick={handleSingleCaptureNow}
+                        disabled={autoCollectorState.isCapturingNow}
+                        className="px-3.5 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold text-xs flex items-center gap-1.5 transition cursor-pointer border border-slate-700"
+                        title="立即手動抓取一筆並寫入資料庫"
+                      >
+                        <Zap className={`h-4 w-4 text-amber-400 ${autoCollectorState.isCapturingNow ? "animate-spin" : ""}`} />
+                        <span>單次手動寫入 1 筆</span>
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* 即時採集與訓練日誌終端視窗 */}
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between text-xs text-slate-400">
+                      <span className="font-bold flex items-center gap-1.5 text-slate-300">
+                        <Terminal className="h-4 w-4 text-emerald-400" />
+                        <span>即時取樣與訓練終端日誌 (Live Stream)</span>
+                      </span>
+                      <span className="font-mono text-[10px] text-slate-500">
+                        最新 50 筆取樣與梯度優化軌跡
+                      </span>
+                    </div>
+
+                    <div className="bg-slate-950 p-3.5 rounded-2xl border border-slate-800 font-mono text-[11px] h-40 overflow-y-auto space-y-1.5">
+                      {autoCollectorState.logs.length === 0 ? (
+                        <div className="text-slate-600 text-center py-6">
+                          尚無採集日誌，點擊「啟動定時自動取樣」或「單次手動寫入」即可開始寫入資料庫。
+                        </div>
+                      ) : (
+                        autoCollectorState.logs.map((log) => (
+                          <div
+                            key={log.id}
+                            className={`flex items-start gap-2 leading-relaxed ${
+                              log.type === "success"
+                                ? "text-emerald-400"
+                                : log.type === "error"
+                                ? "text-rose-400"
+                                : log.type === "warning"
+                                ? "text-amber-300"
+                                : "text-slate-400"
+                            }`}
+                          >
+                            <span className="text-slate-600 select-none shrink-0 font-sans">
+                              [{log.timeFormatted}]
+                            </span>
+                            <span className="break-all">{log.message}</span>
+                          </div>
+                        ))
+                      )}
+                    </div>
                   </div>
                 </div>
 
-                {/* 參數詳細卡片 */}
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs font-mono">
-                  <div className="p-4 bg-slate-950/90 border border-slate-800 rounded-2xl space-y-2">
-                    <span className="text-slate-400 block font-sans font-bold text-[11px] text-emerald-400">
-                      1. 動態車道切換收益門檻 (ΔT_switch)
-                    </span>
-                    <div className="text-2xl font-black text-white">
-                      {learnedParams.laneSwitchMarginSec.toFixed(1)}{" "}
-                      <span className="text-xs font-normal text-slate-400">秒</span>
+                {/* 區塊 2: 手動 10 Epochs 微調與機器學習參數 */}
+                <div className="bg-slate-950/80 p-5 rounded-2xl border border-slate-800 space-y-4">
+                  <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 pb-3 border-b border-slate-800">
+                    <div>
+                      <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                        <Cpu className="h-4 w-4 text-emerald-400" />
+                        <span>車道切換與流態機器學習調校</span>
+                      </h3>
+                      <p className="text-xs text-slate-400 mt-0.5">
+                        使用資料庫梯度下降在線優化車道切換收益門檻 (ΔT_switch) 與跨車道剪力耦合。
+                      </p>
                     </div>
-                    <p className="text-[10px] text-slate-400 font-sans">
-                      當雙車道時間差達到此門檻時，才觸發較快車道導引，防止隨機震盪。
-                    </p>
+
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={handleRunTraining}
+                        disabled={isTraining}
+                        className={`px-4 py-2 rounded-xl font-bold text-xs flex items-center gap-2 transition cursor-pointer ${
+                          isTraining
+                            ? "bg-slate-800 text-slate-400 cursor-not-allowed"
+                            : "bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black"
+                        }`}
+                      >
+                        {isTraining ? (
+                          <>
+                            <RotateCcw className="h-4 w-4 animate-spin" />
+                            <span>訓練中...</span>
+                          </>
+                        ) : (
+                          <>
+                            <Play className="h-4 w-4 fill-current" />
+                            <span>手動執行 10 Epochs 微調 (限後台)</span>
+                          </>
+                        )}
+                      </button>
+
+                      <button
+                        onClick={handleResetModelBaseline}
+                        className="px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-bold flex items-center gap-1.5 transition cursor-pointer"
+                        title="重設模型為物理基準"
+                      >
+                        <RotateCcw className="h-4 w-4" />
+                        <span>重設基準</span>
+                      </button>
+                    </div>
                   </div>
 
-                  <div className="p-4 bg-slate-950/90 border border-slate-800 rounded-2xl space-y-2">
-                    <span className="text-slate-400 block font-sans font-bold text-[11px] text-emerald-400">
-                      2. 內側車道偏置因子 (β_L1)
-                    </span>
-                    <div className="text-2xl font-black text-white">
-                      {learnedParams.lane1SpeedBiasFactor.toFixed(3)}
+                  {/* 參數詳細卡片 */}
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs font-mono">
+                    <div className="p-4 bg-slate-950/90 border border-slate-800 rounded-2xl space-y-2">
+                      <span className="text-slate-400 block font-sans font-bold text-[11px] text-emerald-400">
+                        1. 動態車道切換收益門檻 (ΔT_switch)
+                      </span>
+                      <div className="text-2xl font-black text-white">
+                        {learnedParams.laneSwitchMarginSec.toFixed(1)}{" "}
+                        <span className="text-xs font-normal text-slate-400">秒</span>
+                      </div>
+                      <p className="text-[10px] text-slate-400 font-sans">
+                        當雙車道時間差達到此門檻時，才觸發較快車道導引，防止隨機震盪。
+                      </p>
                     </div>
-                    <p className="text-[10px] text-slate-400 font-sans">
-                      量化內側車道無大車干擾下的常態速度優勢加權。
-                    </p>
-                  </div>
 
-                  <div className="p-4 bg-slate-950/90 border border-slate-800 rounded-2xl space-y-2">
-                    <span className="text-slate-400 block font-sans font-bold text-[11px] text-sky-400">
-                      3. 雙車道紊流剪力耦合 (c_friction)
-                    </span>
-                    <div className="text-2xl font-black text-white">
-                      {learnedParams.laneCouplingFriction.toFixed(3)}
+                    <div className="p-4 bg-slate-950/90 border border-slate-800 rounded-2xl space-y-2">
+                      <span className="text-slate-400 block font-sans font-bold text-[11px] text-emerald-400">
+                        2. 內側車道偏置因子 (β_L1)
+                      </span>
+                      <div className="text-2xl font-black text-white">
+                        {learnedParams.lane1SpeedBiasFactor.toFixed(3)}
+                      </div>
+                      <p className="text-[10px] text-slate-400 font-sans">
+                        量化內側車道無大車干擾下的常態速度優勢加權。
+                      </p>
                     </div>
-                    <p className="text-[10px] text-slate-400 font-sans">
-                      相鄰車道流速差對本車道造成的拖曳降速阻力係數。
-                    </p>
-                  </div>
 
-                  <div className="p-4 bg-slate-950/90 border border-slate-800 rounded-2xl space-y-2">
-                    <span className="text-slate-400 block font-sans font-bold text-[11px] text-sky-400">
-                      4. 車道選擇靈敏度指數 (β_choice)
-                    </span>
-                    <div className="text-2xl font-black text-white">
-                      {learnedParams.laneChoiceSensitivity.toFixed(3)}
+                    <div className="p-4 bg-slate-950/90 border border-slate-800 rounded-2xl space-y-2">
+                      <span className="text-slate-400 block font-sans font-bold text-[11px] text-sky-400">
+                        3. 雙車道紊流剪力耦合 (c_friction)
+                      </span>
+                      <div className="text-2xl font-black text-white">
+                        {learnedParams.laneCouplingFriction.toFixed(3)}
+                      </div>
+                      <p className="text-[10px] text-slate-400 font-sans">
+                        相鄰車道流速差對本車道造成的拖曳降速阻力係數。
+                      </p>
                     </div>
-                    <p className="text-[10px] text-slate-400 font-sans">
-                      Softmax 分流決策邊際分配強度。
-                    </p>
+
+                    <div className="p-4 bg-slate-950/90 border border-slate-800 rounded-2xl space-y-2">
+                      <span className="text-slate-400 block font-sans font-bold text-[11px] text-sky-400">
+                        4. 車道選擇靈敏度指數 (β_choice)
+                      </span>
+                      <div className="text-2xl font-black text-white">
+                        {learnedParams.laneChoiceSensitivity.toFixed(3)}
+                      </div>
+                      <p className="text-[10px] text-slate-400 font-sans">
+                        Softmax 分流決策邊際分配強度。
+                      </p>
+                    </div>
                   </div>
                 </div>
               </div>
