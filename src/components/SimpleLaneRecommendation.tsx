@@ -91,6 +91,11 @@ export default function SimpleLaneRecommendation({
           </div>
 
           <div className="flex items-center gap-1.5 text-[11px] font-mono text-slate-500">
+            {estState.isLateNightHours && (
+              <span className="px-2 py-0.5 bg-indigo-50 text-indigo-700 font-bold rounded-md border border-indigo-200 flex items-center gap-1">
+                <span>🌙 02~04 原API直通</span>
+              </span>
+            )}
             <span className="px-2 py-0.5 bg-slate-100 rounded-md">
               VD站：{estState.actualVdStationCount}處
             </span>
@@ -107,14 +112,18 @@ export default function SimpleLaneRecommendation({
         {/* 結論直觀標題 */}
         <div className="space-y-1">
           <h2 className="text-base sm:text-lg font-black text-slate-900 leading-snug">
-            {isBothEqual
+            {estState.isLateNightHours
+              ? "🌙 深夜時段 (02:00 - 04:00) 直接放原 API 資料（全線順暢）"
+              : isBothEqual
               ? "雙車道流速均勻（兩邊都可以）"
               : isLane1Recommended
               ? "👈 內側車道 (左) 速度較快"
               : "外側車道 (右) 👉 速度較快"}
           </h2>
           <p className="text-xs text-slate-500">
-            {isBothEqual
+            {estState.isLateNightHours
+              ? "依規範深夜 02:00 - 04:00 不進行延遲補償或模型修正，直接忠實呈現 TDX 車輛偵測器原始觀測資料。全線暢通自由流，兩側車道皆可安全順行。"
+              : isBothEqual
               ? `雙車道時間差僅 ${Math.abs(Math.round(diffSecVal))} 秒（小於 30 秒），時間相近，兩邊都可以選擇。`
               : isLane1Recommended
               ? `內側車道領先 +${speedDiff.toFixed(1)} km/h，預估省時 ${Math.abs(Math.round(diffSec))} 秒 (超逾 30 秒建議門檻)。`

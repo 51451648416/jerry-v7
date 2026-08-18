@@ -514,7 +514,11 @@ export default function DepartureTimeRecommender({
               <div>
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="text-[11px] font-mono uppercase px-2.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-400/30">
-                    AI OPTIMAL LAUNCH TIME
+                    {departureData.calculationSourceType === "RECENT_VISITOR_TRAJECTORY"
+                      ? "RECENT VISITOR TRAJECTORY (近2小時訪客走勢)"
+                      : departureData.calculationSourceType === "HYBRID_CORRECTED"
+                      ? "DYNAMIC HYBRID CORRECTED (大數據+走勢偏離校正)"
+                      : "BIG DATA EMPIRICAL MODEL (大數據歷史平均)"}
                   </span>
                   <span className="text-xs text-slate-300 font-mono">
                     路徑：{departureData.origin} → {departureData.destination} ({departureData.distanceKm} km)
@@ -522,6 +526,15 @@ export default function DepartureTimeRecommender({
                   <span className="text-xs text-emerald-300 font-mono bg-slate-800/80 px-2 py-0.5 rounded-md">
                     📅 {departureData.targetDateTimeStr} ({departureData.targetDayOfWeek})
                   </span>
+                  <span className="text-xs font-bold text-amber-300 bg-amber-950/80 border border-amber-600/40 px-2 py-0.5 rounded-md">
+                    {departureData.weekOfMonthLabel} | {departureData.specialDayCategory}
+                  </span>
+                  {departureData.realtimeCorrectionApplied && (
+                    <span className="text-xs font-bold text-rose-300 bg-rose-950/80 border border-rose-600/50 px-2.5 py-0.5 rounded-md flex items-center gap-1">
+                      <Flame className="h-3 w-3 text-rose-400" />
+                      <span>走勢偏離校正 ({departureData.realtimeBigDataDivergenceRatio}%)</span>
+                    </span>
+                  )}
                 </div>
                 <h3 className="text-lg sm:text-2xl font-black mt-1 text-white tracking-tight">
                   推薦最佳出發：【{departureData.recommendedSlot.departureLabel}】
@@ -551,7 +564,7 @@ export default function DepartureTimeRecommender({
               </span>
             </div>
             <span className="text-emerald-400/90 font-sans font-bold">
-              ✓ 資料庫每次偵測即時納入持續訓練最佳化
+              ✓ 聚合【{departureData.targetDayOfWeek} × {departureData.weekOfMonthLabel} × {departureData.isSpecialDay ? "特別日" : "常態日"}】之百萬級大數據歷史平均
             </span>
           </div>
         </div>
@@ -566,7 +579,7 @@ export default function DepartureTimeRecommender({
               <span>指定時段前後區間耗時與流速對比 ({departureData.targetDateTimeStr})</span>
             </h3>
             <span className="text-xs text-slate-500 font-mono">
-              基準排程點：{departureData.targetDateTimeStr}
+              大數據維度：{departureData.bigDataCluster?.dimensionLabel}
             </span>
           </div>
 
@@ -583,7 +596,7 @@ export default function DepartureTimeRecommender({
                 {slot.isRecommended && (
                   <div className="absolute -top-3 right-4 px-3 py-0.5 rounded-full bg-emerald-600 text-white font-extrabold text-[10px] shadow-sm flex items-center gap-1">
                     <Sparkles className="h-3 w-3" />
-                    <span>最佳推薦</span>
+                    <span>大數據最佳推薦</span>
                   </div>
                 )}
 
@@ -601,7 +614,7 @@ export default function DepartureTimeRecommender({
                           : "bg-rose-100 text-rose-800"
                       }`}
                     >
-                      壅塞指數 {slot.congestionIndex}%
+                      大數據壅塞指數 {slot.congestionIndex}%
                     </span>
                   </div>
 
@@ -626,7 +639,7 @@ export default function DepartureTimeRecommender({
                   {slot.timeSavedVsWorstMinutes > 0 ? (
                     <div className="flex items-center gap-1 text-emerald-700 font-bold text-[11px]">
                       <CheckCircle2 className="h-3.5 w-3.5 shrink-0" />
-                      <span>相較最塞可省 {slot.timeSavedVsWorstMinutes} 分鐘</span>
+                      <span>相較大數據最塞可省 {slot.timeSavedVsWorstMinutes} 分鐘</span>
                     </div>
                   ) : (
                     <div className="flex items-center gap-1 text-slate-400 text-[11px]">
@@ -644,8 +657,8 @@ export default function DepartureTimeRecommender({
         </div>
       )}
 
-      {/* 全序列資料集訓練與歷史時序序列推估面板 (Credentialed Sequence Dataset Training & Historical Sequence Matching) */}
-      {departureData && (
+      {/* 國道5號大數據分群多維歷史統計面板 (Big Data Multidimensional Empirical Cluster Breakdown) */}
+      {departureData && departureData.bigDataCluster && (
         <div className="bg-slate-900 text-slate-100 rounded-3xl p-5 sm:p-7 border border-slate-800 shadow-md space-y-5">
           <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 border-b border-slate-800 pb-4">
             <div className="flex items-center gap-2.5">
@@ -654,10 +667,10 @@ export default function DepartureTimeRecommender({
               </span>
               <div>
                 <h3 className="text-base font-extrabold text-white flex items-center gap-2">
-                  <span>全序列時序資料集訓練機制 (Sequence Dataset Training Grounding)</span>
+                  <span>大數據分群歷史平均計算機制 (Big Data Multidimensional Cluster Model)</span>
                 </h3>
                 <p className="text-xs text-slate-400 mt-0.5">
-                  以驗證之歷史全時序偵測資料庫訓練時空非線性流速參數；時序演進則以歷史實測序列為基準推估
+                  以「{departureData.targetDayOfWeek} × {departureData.weekOfMonthLabel} × {departureData.isSpecialDay ? "特別日情境" : "常態日"}」之百萬級歷史實測大數據統計平均計算
                 </p>
               </div>
             </div>
@@ -665,77 +678,133 @@ export default function DepartureTimeRecommender({
             <div className="flex items-center gap-2">
               <span className="text-[11px] font-mono font-bold px-2.5 py-1 rounded-lg bg-slate-800 text-emerald-300 border border-slate-700 flex items-center gap-1.5">
                 <Cpu className="h-3.5 w-3.5 text-emerald-400" />
-                <span>訓練樣本數：{departureData.trainedSequenceDatasetCount} 筆全路段序列</span>
+                <span>分群採樣總數：{departureData.bigDataCluster.totalClusterSamples.toLocaleString()} 筆時空微元</span>
               </span>
               <span className="text-[11px] font-mono font-bold px-2.5 py-1 rounded-lg bg-emerald-950/80 text-emerald-300 border border-emerald-800/60">
-                信心度：{departureData.sequenceConfidenceScore}%
+                模型信心度：{departureData.sequenceConfidenceScore}%
+              </span>
+            </div>
+          </div>
+
+          {/* 四大維度指標卡 (Dimension Cards) */}
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            <div className="bg-slate-950/80 border border-slate-800 rounded-2xl p-3.5 text-xs font-mono">
+              <span className="text-slate-400 block text-[11px] font-sans">分群歷史平均車速</span>
+              <span className="text-xl font-black text-emerald-400 mt-1 block">
+                {departureData.bigDataCluster.meanSpeedKmh} km/h
+              </span>
+              <span className="text-[10px] text-slate-500 font-sans mt-0.5 block">
+                標準差 σ: {departureData.bigDataCluster.stdDevTravelTimeMin} 分鐘
+              </span>
+            </div>
+
+            <div className="bg-slate-950/80 border border-slate-800 rounded-2xl p-3.5 text-xs font-mono">
+              <span className="text-slate-400 block text-[11px] font-sans">全日平均旅行時間 (μ)</span>
+              <span className="text-xl font-black text-white mt-1 block">
+                {departureData.bigDataCluster.meanTravelTimeMin} 分鐘
+              </span>
+              <span className="text-[10px] text-slate-500 font-sans mt-0.5 block">
+                含尖峰與離峰算術平均
+              </span>
+            </div>
+
+            <div className="bg-slate-950/80 border border-slate-800 rounded-2xl p-3.5 text-xs font-mono">
+              <span className="text-slate-400 block text-[11px] font-sans">中位數耗時 (P50)</span>
+              <span className="text-xl font-black text-sky-400 mt-1 block">
+                {departureData.bigDataCluster.p50TravelTimeMin} 分鐘
+              </span>
+              <span className="text-[10px] text-slate-500 font-sans mt-0.5 block">
+                半數車輛低於此時間
+              </span>
+            </div>
+
+            <div className="bg-slate-950/80 border border-slate-800 rounded-2xl p-3.5 text-xs font-mono">
+              <span className="text-slate-400 block text-[11px] font-sans">尖峰通行耗時 (P85)</span>
+              <span className="text-xl font-black text-rose-400 mt-1 block">
+                {departureData.bigDataCluster.p85TravelTimeMin} 分鐘
+              </span>
+              <span className="text-[10px] text-slate-500 font-sans mt-0.5 block">
+                尖峰回堵高負載區間
               </span>
             </div>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {/* 左側：訓練與時序推估原理解析 */}
+            {/* 左側：分群特徵解析 */}
             <div className="bg-slate-950/70 border border-slate-800/80 rounded-2xl p-4 space-y-3">
               <span className="text-xs font-bold text-emerald-300 flex items-center gap-1.5">
                 <Layers className="h-4 w-4 text-emerald-400" />
-                <span>1. 全序列模型訓練 (Sequence Parameter Optimization)</span>
+                <span>1. 大數據分群特徵 (Cluster Features)</span>
               </span>
-              <p className="text-xs text-slate-300 leading-relaxed">
-                系統使用完整時序序列（包含全線 VD 站點、車道分流與歷史回堵震波數據）訓練<strong>流體自由流速 (v_f)</strong>、<strong>臨界密度 (k_c)</strong>、<strong>回堵滯後時間常數 (τ)</strong> 及<strong>日變化尖離峰加權</strong>，使損失函數 (MAE) 降至 <strong>{(departureData.sequenceTrainingLossMae ?? 12.8).toFixed(1)}s</strong>。
-              </p>
-              <div className="flex items-center gap-2 text-[11px] font-mono text-slate-400 bg-slate-900/90 px-3 py-2 rounded-xl border border-slate-800">
-                <TrendingUp className="h-3.5 w-3.5 text-emerald-400 shrink-0" />
-                <span>模型迭代版本：v{departureData.sequenceModelTrainedVersion} (即時線上持續梯度微調)</span>
+              <div className="text-xs text-slate-300 space-y-1.5 leading-relaxed">
+                <div>
+                  <span className="text-slate-400">📅 計算維度標籤：</span>
+                  <strong className="text-white">{departureData.bigDataCluster.dimensionLabel}</strong>
+                </div>
+                <div>
+                  <span className="text-slate-400">🚦 特別日分類：</span>
+                  <strong className="text-amber-300">{departureData.specialDayCategory}</strong>
+                </div>
+                <div>
+                  <span className="text-slate-400">⏳ 大數據常態尖峰：</span>
+                  <strong className="text-rose-300">{departureData.bigDataCluster.congestionPeakWindow}</strong>
+                </div>
+                <p className="text-[11px] text-slate-400 pt-1">
+                  {departureData.specialDayDescription}
+                </p>
               </div>
             </div>
 
-            {/* 右側：歷史時序序列比對 (Historical Sequence Matching) */}
+            {/* 右側：計算原則與方法說明 */}
             <div className="bg-slate-950/70 border border-slate-800/80 rounded-2xl p-4 space-y-3">
               <span className="text-xs font-bold text-emerald-300 flex items-center gap-1.5">
-                <History className="h-4 w-4 text-emerald-400" />
-                <span>2. 歷史時序序列基底 (Historical Sequence Trajectory)</span>
+                <TrendingUp className="h-4 w-4 text-emerald-400" />
+                <span>2. 大數據平均計算原則 (Statistical Methodology)</span>
               </span>
               <p className="text-xs text-slate-300 leading-relaxed">
-                對於出發時間的時序曲線演進，直接比對資料庫中相符之<strong>歷史時序序列 Ground Truth</strong>（考量方向、週間/週末與連假特徵），直接還原各時段前後之流速波動與回堵演變。
+                {departureData.bigDataCluster.methodologyNote}
               </p>
               <div className="flex items-center gap-2 text-[11px] font-mono text-slate-400 bg-slate-900/90 px-3 py-2 rounded-xl border border-slate-800">
                 <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400 shrink-0" />
-                <span>已自動比對當前時段之特徵權重與假日衝擊係數</span>
+                <span>已排除單點噪訊，以多維度實測大數據分佈之均值作為推估依據</span>
               </div>
             </div>
           </div>
 
-          {/* 匹配之歷史時序序列代表樣本 (Matched Sequence Reference Points) */}
-          {departureData.matchedHistoricalSequences && departureData.matchedHistoricalSequences.length > 0 && (
-            <div className="space-y-2 pt-2 border-t border-slate-800">
-              <span className="text-xs font-bold text-slate-400 block">
-                資料庫匹配之代表性歷史時序序列數據點 (Historical Sequence Reference Points)：
-              </span>
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2.5">
-                {departureData.matchedHistoricalSequences.map((seq, qIdx) => (
+          {/* 該分群大數據 24 小時歷史平均時段預覽 (24-Hour Empirical Hourly Averages) */}
+          <div className="space-y-2 pt-2 border-t border-slate-800">
+            <span className="text-xs font-bold text-slate-400 block">
+              【{departureData.bigDataCluster.dimensionLabel}】大數據全日 24 小時歷史平均行車耗時與流速分佈：
+            </span>
+            <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-6 gap-2 font-mono text-[11px]">
+              {departureData.bigDataCluster.hourlyBreakdown
+                .filter((_, idx) => idx % 2 === 0 || idx === 8 || idx === 15 || idx === 18)
+                .slice(0, 12)
+                .map((hb, hIdx) => (
                   <div
-                    key={qIdx}
-                    className="bg-slate-950/90 border border-slate-800 rounded-xl p-3 text-xs space-y-1.5 font-mono"
+                    key={hIdx}
+                    className={`bg-slate-950/90 border rounded-xl p-2.5 space-y-1 ${
+                      hb.meanSpeedKmh < 45
+                        ? "border-rose-900/60 text-rose-300"
+                        : hb.meanSpeedKmh < 65
+                        ? "border-amber-900/60 text-amber-300"
+                        : "border-slate-800 text-slate-300"
+                    }`}
                   >
-                    <div className="flex items-center justify-between">
-                      <span className="text-emerald-400 font-bold text-[11px]">{seq.id}</span>
-                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-800 text-slate-300">
-                        相似度 {seq.similarityScore}%
-                      </span>
+                    <div className="flex justify-between text-[10px] text-slate-400">
+                      <span>{hb.hourLabel.split(" - ")[0]}</span>
+                      <span>{hb.samplePoints} 筆</span>
                     </div>
-                    <div className="text-slate-300 text-[11px] flex items-center justify-between">
-                      <span>{seq.timeFormatted.split(" ")[0]}</span>
-                      <span className="text-slate-400">{seq.direction === "S" ? "南向" : "北向"}</span>
+                    <div className="text-sm font-bold text-white">
+                      {hb.meanTravelTimeMin} 分鐘
                     </div>
-                    <div className="flex items-center justify-between pt-1 border-t border-slate-800/80 text-[11px]">
-                      <span className="text-slate-400">雪隧: {seq.travelTimeFormatted}</span>
-                      <span className="text-emerald-300 font-bold">{seq.corridorTravelTimeFormatted || `${seq.speedKmh} km/h`}</span>
+                    <div className="text-[10px]">
+                      均速 {hb.meanSpeedKmh} km/h
                     </div>
                   </div>
                 ))}
-              </div>
             </div>
-          )}
+          </div>
         </div>
       )}
     </div>

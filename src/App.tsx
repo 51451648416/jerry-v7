@@ -37,6 +37,7 @@ import { runVdTrafficEstimator } from "./estimator/trafficEngine";
 import { captureDetectionToDataset } from "./services/datasetRepository";
 import { isAdminAuthenticated, subscribeAdminAuth } from "./services/adminAuth";
 import { recordVisitorSession } from "./services/visitorStats";
+import { recordVisitorTrafficTrajectory } from "./services/recentVisitorTrajectoryRepository";
 
 const API_COOLDOWN_SECONDS = 80;
 const STALE_DATA_TIMEOUT_SECONDS = 120; // 2 分鐘 (120 秒) 未更新即判為過期，需跳轉回更新畫面
@@ -342,6 +343,9 @@ export default function App() {
 
       // Automatically incorporate detection data into dataset on each analysis
       const { totalCount } = captureDetectionToDataset(output, targetDir);
+
+      // Record visitor trajectory snapshot for 3-hour trend rolling window
+      recordVisitorTrafficTrajectory(output);
 
       setEstimatorOutput(output);
       try {

@@ -36,6 +36,53 @@ export const SLICE_LENGTH_KM = HSUEHSHAN_TUNNEL_TOTAL_LENGTH_KM / MODEL_DISCRETI
 export const MIN_PHYSICAL_CRAWL_SPEED_KMH = 3.6; // 1 m/s 爬行速度下限，防止除以零與數值發散
 
 /**
+ * 判定是否為深夜時段 (02:00 ~ 04:00)
+ * 依規範：深夜時段 02:00 - 04:00 直接放原 API 資料（不進行模型非線性延遲修正、滯後修正或人工調和，直接輸出 VD 原始觀測值）
+ */
+export function checkIsLateNightHours(
+  apiTimestampStr?: string,
+  currentDate: Date = new Date()
+): {
+  isLateNight: boolean;
+  hour: number;
+  minute: number;
+  timeLabel: string;
+} {
+  let targetDate = currentDate;
+  if (apiTimestampStr) {
+    const parsed = new Date(apiTimestampStr);
+    if (!isNaN(parsed.getTime())) {
+      targetDate = parsed;
+    } else {
+      const match = apiTimestampStr.match(/(?:T|\s|^)(\d{1,2}):(\d{2})/);
+      if (match) {
+        const h = parseInt(match[1], 10);
+        const m = parseInt(match[2], 10);
+        const isLateNight = h === 2 || h === 3 || (h === 4 && m === 0);
+        return {
+          isLateNight,
+          hour: h,
+          minute: m,
+          timeLabel: `${h.toString().padStart(2, "0")}:${m.toString().padStart(2, "0")}`,
+        };
+      }
+    }
+  }
+
+  const hour = targetDate.getHours();
+  const minute = targetDate.getMinutes();
+  const isLateNight = hour === 2 || hour === 3 || (hour === 4 && minute === 0);
+  const timeLabel = `${hour.toString().padStart(2, "0")}:${minute.toString().padStart(2, "0")}`;
+
+  return {
+    isLateNight,
+    hour,
+    minute,
+    timeLabel,
+  };
+}
+
+/**
  * 格式化秒數為標準「X 分 YY 秒」（僅供 UI 顯示層呈現）
  */
 export function formatSecondsToMinSec(totalSec: number): string {
@@ -271,108 +318,130 @@ export function runVdTrafficEstimator(
   const receivedTimestampStr = new Date().toISOString();
   const apiLatency = evaluateApiLatency(apiTimestampStr, receivedTimestampStr);
 
+  // 判定是否為深夜時段 (02:00 ~ 04:00)
+  const lateNightStatus = checkIsLateNightHours(apiTimestampStr);
+  const isLateNightHours = lateNightStatus.isLateNight;
+
   // Step 3: Compute Trajectory with Primary Approach & Alternative Robust Fallback
-  // 1. 保留原本動態連續積分演算法為預設主方法 (Do not change the original approach)
-  // 2. 若原本方法失敗 (計算例外/數值無效)，自動採用替代穩健方法 (Use a different method if the original method fails)
-  let estimationMethod: "PRIMARY_TRAJECTORY_CALCULUS" | "ALTERNATIVE_ROBUST_FALLBACK" = "PRIMARY_TRAJECTORY_CALCULUS";
+  // 深夜時段 02:00 - 04:00 依規定直接放原 API 資料（不進行模型非線性延遲修正、滯後修正或人工調和，直接輸出 VD 原始觀測值）
+  let estimationMethod: "PRIMARY_TRAJECTORY_CALCULUS" | "ALTERNATIVE_ROBUST_FALLBACK" | "LATE_NIGHT_RAW_API_DIRECT" = isLateNightHours
+    ? "LATE_NIGHT_RAW_API_DIRECT"
+    : "PRIMARY_TRAJECTORY_CALCULUS";
   let lane1Trajectory: any;
   let lane2Trajectory: any;
   let roadTrajectory: any;
 
-  try {
-    lane1Trajectory = estimateDelayAwareNonlinearTrajectory(
-      validatedRecords,
-      direction,
-      0,
-      apiLatency.tauApiSec,
-      apiLatency.isLatencyKnown
-    );
-    lane2Trajectory = estimateDelayAwareNonlinearTrajectory(
-      validatedRecords,
-      direction,
-      1,
-      apiLatency.tauApiSec,
-      apiLatency.isLatencyKnown
-    );
-    roadTrajectory = estimateDelayAwareNonlinearTrajectory(
-      validatedRecords,
-      direction,
-      -1,
-      apiLatency.tauApiSec,
-      apiLatency.isLatencyKnown
-    );
+  if (isLateNightHours) {
+    // 深夜時段 (02:00 - 04:00)：直接放原 API 資料（空間離散連續映射，不施加延遲補償與波傳播非線性衰減）
+    lane1Trajectory = computeDiscretizedTrajectory(validatedRecords, direction, 0);
+    lane2Trajectory = computeDiscretizedTrajectory(validatedRecords, direction, 1);
+    roadTrajectory = computeDiscretizedTrajectory(validatedRecords, direction, -1);
+  } else {
+    try {
+      lane1Trajectory = estimateDelayAwareNonlinearTrajectory(
+        validatedRecords,
+        direction,
+        0,
+        apiLatency.tauApiSec,
+        apiLatency.isLatencyKnown
+      );
+      lane2Trajectory = estimateDelayAwareNonlinearTrajectory(
+        validatedRecords,
+        direction,
+        1,
+        apiLatency.tauApiSec,
+        apiLatency.isLatencyKnown
+      );
+      roadTrajectory = estimateDelayAwareNonlinearTrajectory(
+        validatedRecords,
+        direction,
+        -1,
+        apiLatency.tauApiSec,
+        apiLatency.isLatencyKnown
+      );
 
-    // 檢驗數值合理性 (避免發散或非有限數)
-    if (
-      !isFinite(lane1Trajectory.totalTravelTimeSec) ||
-      lane1Trajectory.totalTravelTimeSec <= 0 ||
-      !isFinite(lane2Trajectory.totalTravelTimeSec) ||
-      lane2Trajectory.totalTravelTimeSec <= 0 ||
-      !isFinite(roadTrajectory.totalTravelTimeSec) ||
-      roadTrajectory.totalTravelTimeSec <= 0
-    ) {
-      throw new Error("Primary trajectory calculus returned non-finite or non-positive travel time.");
+      // 檢驗數值合理性 (避免發散或非有限數)
+      if (
+        !isFinite(lane1Trajectory.totalTravelTimeSec) ||
+        lane1Trajectory.totalTravelTimeSec <= 0 ||
+        !isFinite(lane2Trajectory.totalTravelTimeSec) ||
+        lane2Trajectory.totalTravelTimeSec <= 0 ||
+        !isFinite(roadTrajectory.totalTravelTimeSec) ||
+        roadTrajectory.totalTravelTimeSec <= 0
+      ) {
+        throw new Error("Primary trajectory calculus returned non-finite or non-positive travel time.");
+      }
+    } catch (primaryErr) {
+      console.warn("原本方法計算異常，啟動備援穩健替代演算法 (Falling back to alternative method):", primaryErr);
+      estimationMethod = "ALTERNATIVE_ROBUST_FALLBACK";
+      lane1Trajectory = computeAlternativeRobustTrajectory(validatedRecords, direction, 0);
+      lane2Trajectory = computeAlternativeRobustTrajectory(validatedRecords, direction, 1);
+      roadTrajectory = computeAlternativeRobustTrajectory(validatedRecords, direction, -1);
     }
-  } catch (primaryErr) {
-    console.warn("原本方法計算異常，啟動備援穩健替代演算法 (Falling back to alternative method):", primaryErr);
-    estimationMethod = "ALTERNATIVE_ROBUST_FALLBACK";
-    lane1Trajectory = computeAlternativeRobustTrajectory(validatedRecords, direction, 0);
-    lane2Trajectory = computeAlternativeRobustTrajectory(validatedRecords, direction, 1);
-    roadTrajectory = computeAlternativeRobustTrajectory(validatedRecords, direction, -1);
   }
 
   // Lane 1 Speeds & Aggregations (Full precision internally)
-  const lane1Speeds = validatedRecords.map((d) => d.lanes[0]?.speedKmh || 80);
-  const lane1Flows = validatedRecords.map((d) => d.lanes[0]?.flowVehPerHour || 1000);
-  const lane1Occs = validatedRecords.map((d) => d.lanes[0]?.occupancyPercent || 10);
+  const lane1Speeds = validatedRecords.map((d) => d.lanes[0]?.speedKmh || 0);
+  const lane1Flows = validatedRecords.map((d) => d.lanes[0]?.flowVehPerHour || 0);
+  const lane1Occs = validatedRecords.map((d) => d.lanes[0]?.occupancyPercent || 0);
   
+  // 檢測車道是否全為 0 (如一車道全0 = 封閉)
+  const isLane1AllZero = lane1Speeds.length > 0 && lane1Speeds.every((s) => s === 0);
+  const isLane2AllZero = validatedRecords.length > 0 && validatedRecords.every((d) => (d.lanes[1]?.speedKmh ?? 0) === 0);
+
   // 1. detector_arithmetic_mean_speed
-  const lane1DetectorSpeed = lane1Speeds.reduce((a, b) => a + b, 0) / (lane1Speeds.length || 1);
+  const lane1DetectorSpeed = isLane1AllZero ? 0 : lane1Speeds.reduce((a, b) => a + b, 0) / (lane1Speeds.length || 1);
   // 2. space_mean_speed (harmonic mean)
-  const lane1HarmonicSpeed =
-    lane1Speeds.length / lane1Speeds.reduce((acc, s) => acc + 1 / Math.max(MIN_PHYSICAL_CRAWL_SPEED_KMH, s), 0);
+  const lane1HarmonicSpeed = isLane1AllZero
+    ? 0
+    : lane1Speeds.length / lane1Speeds.reduce((acc, s) => acc + 1 / Math.max(MIN_PHYSICAL_CRAWL_SPEED_KMH, s), 0);
 
   const lane1State: LaneState = {
     laneId: 1,
     laneName: "車道 1 (內側車道)",
     detectorArithmeticMeanSpeedKmh: lane1DetectorSpeed,
     spaceMeanSpeedKmh: lane1HarmonicSpeed,
-    travelTimeSec: lane1Trajectory.totalTravelTimeSec, // Full precision
-    travelTimeFormatted: formatSecondsToMinSec(lane1Trajectory.totalTravelTimeSec), // Formatted at UI step
-    equivalentTravelSpeedKmh: lane1Trajectory.equivalentTravelSpeedKmh, // Direct from L / (T / 3600)
+    travelTimeSec: isLane1AllZero ? 0 : lane1Trajectory.totalTravelTimeSec, // Full precision
+    travelTimeFormatted: isLane1AllZero ? "⛔ 車道封閉 (0 km/h)" : formatSecondsToMinSec(lane1Trajectory.totalTravelTimeSec), // Formatted at UI step
+    equivalentTravelSpeedKmh: isLane1AllZero ? 0 : lane1Trajectory.equivalentTravelSpeedKmh, // Direct from L / (T / 3600)
     flowVehPerHour: Math.round(lane1Flows.reduce((a, b) => a + b, 0) / (lane1Flows.length || 1)),
     occupancyPercent: lane1Occs.reduce((a, b) => a + b, 0) / (lane1Occs.length || 1),
     densityVehPerKm:
-      lane1Trajectory.equivalentTravelSpeedKmh > 0
+      !isLane1AllZero && lane1Trajectory.equivalentTravelSpeedKmh > 0
         ? (lane1Flows.reduce((a, b) => a + b, 0) / (lane1Flows.length || 1)) / lane1Trajectory.equivalentTravelSpeedKmh
         : 0,
     segments: lane1Trajectory.segments,
+    isClosed: isLane1AllZero,
+    closureNotice: isLane1AllZero ? "⚠️ 內側車道偵測全線流速流量為 0，已判定為【車道封閉】管制中" : undefined,
   };
 
   // Lane 2 Speeds & Aggregations (Full precision internally)
-  const lane2Speeds = validatedRecords.map((d) => d.lanes[1]?.speedKmh || d.lanes[0]?.speedKmh || 75);
-  const lane2Flows = validatedRecords.map((d) => d.lanes[1]?.flowVehPerHour || d.lanes[0]?.flowVehPerHour || 950);
-  const lane2Occs = validatedRecords.map((d) => d.lanes[1]?.occupancyPercent || d.lanes[0]?.occupancyPercent || 12);
+  const lane2Speeds = validatedRecords.map((d) => d.lanes[1]?.speedKmh || (isLane2AllZero ? 0 : d.lanes[0]?.speedKmh || 75));
+  const lane2Flows = validatedRecords.map((d) => d.lanes[1]?.flowVehPerHour || 0);
+  const lane2Occs = validatedRecords.map((d) => d.lanes[1]?.occupancyPercent || 0);
   
-  const lane2DetectorSpeed = lane2Speeds.reduce((a, b) => a + b, 0) / (lane2Speeds.length || 1);
-  const lane2HarmonicSpeed =
-    lane2Speeds.length / lane2Speeds.reduce((acc, s) => acc + 1 / Math.max(MIN_PHYSICAL_CRAWL_SPEED_KMH, s), 0);
+  const lane2DetectorSpeed = isLane2AllZero ? 0 : lane2Speeds.reduce((a, b) => a + b, 0) / (lane2Speeds.length || 1);
+  const lane2HarmonicSpeed = isLane2AllZero
+    ? 0
+    : lane2Speeds.length / lane2Speeds.reduce((acc, s) => acc + 1 / Math.max(MIN_PHYSICAL_CRAWL_SPEED_KMH, s), 0);
 
   const lane2State: LaneState = {
     laneId: 2,
     laneName: "車道 2 (外側車道)",
     detectorArithmeticMeanSpeedKmh: lane2DetectorSpeed,
     spaceMeanSpeedKmh: lane2HarmonicSpeed,
-    travelTimeSec: lane2Trajectory.totalTravelTimeSec, // Full precision
-    travelTimeFormatted: formatSecondsToMinSec(lane2Trajectory.totalTravelTimeSec), // Formatted at UI step
-    equivalentTravelSpeedKmh: lane2Trajectory.equivalentTravelSpeedKmh, // Direct from L / (T / 3600)
+    travelTimeSec: isLane2AllZero ? 0 : lane2Trajectory.totalTravelTimeSec, // Full precision
+    travelTimeFormatted: isLane2AllZero ? "⛔ 車道封閉 (0 km/h)" : formatSecondsToMinSec(lane2Trajectory.totalTravelTimeSec), // Formatted at UI step
+    equivalentTravelSpeedKmh: isLane2AllZero ? 0 : lane2Trajectory.equivalentTravelSpeedKmh, // Direct from L / (T / 3600)
     flowVehPerHour: Math.round(lane2Flows.reduce((a, b) => a + b, 0) / (lane2Flows.length || 1)),
     occupancyPercent: lane2Occs.reduce((a, b) => a + b, 0) / (lane2Occs.length || 1),
     densityVehPerKm:
-      lane2Trajectory.equivalentTravelSpeedKmh > 0
+      !isLane2AllZero && lane2Trajectory.equivalentTravelSpeedKmh > 0
         ? (lane2Flows.reduce((a, b) => a + b, 0) / (lane2Flows.length || 1)) / lane2Trajectory.equivalentTravelSpeedKmh
         : 0,
     segments: lane2Trajectory.segments,
+    isClosed: isLane2AllZero,
+    closureNotice: isLane2AllZero ? "⚠️ 外側車道偵測全線流速流量為 0，已判定為【車道封閉】管制中" : undefined,
   };
 
   // Step 4: Double Verification for Extreme Situations (速差超過 23 km/h 觸發二次重算，重算仍 > 23 km/h 判定為極端情況並直接顯示 API 原始數據)
@@ -429,8 +498,31 @@ export function runVdTrafficEstimator(
   let fasterLaneId: number | null = null;
   let comparisonTitle = "";
   let safetyNotice = "";
+  let isLaneClosed = isLane1AllZero || isLane2AllZero;
+  let closedLaneId: number | undefined = isLane1AllZero ? 1 : isLane2AllZero ? 2 : undefined;
+  let closureNotice: string | undefined = undefined;
 
-  if (doubleVerification.isExtremeSituation) {
+  if (isLane1AllZero && isLane2AllZero) {
+    fasterLaneId = null;
+    comparisonTitle = `⛔ 雪山隧道全線雙車道封閉管制中 (兩車道時速與流量皆為 0)`;
+    safetyNotice = `【全線封閉警告】偵測全線兩車道速度與流量皆為 0，隧道目前全線封閉管制，禁止車輛進入。請配合現場交管改道台9線或台2線。`;
+    closureNotice = "雪山隧道全線封閉管制中";
+  } else if (isLane1AllZero) {
+    fasterLaneId = 2; // 外側車道唯一開放行駛
+    comparisonTitle = `⛔ 內側車道封閉管制中 (全線數據為 0)！請全數行駛 👉 外側車道`;
+    safetyNotice = `【車道封閉管制】內側車道偵測全線無車流 (0 km/h)，判定為封閉維護或事故管制，請勿駛入內側車道，請依號誌行駛外側車道。`;
+    closureNotice = "內側車道全線封閉，唯一開放外側車道";
+  } else if (isLane2AllZero) {
+    fasterLaneId = 1; // 內側車道唯一開放行駛
+    comparisonTitle = `⛔ 外側車道封閉管制中 (全線數據為 0)！請全數行駛 👈 內側車道`;
+    safetyNotice = `【車道封閉管制】外側車道偵測全線無車流 (0 km/h)，判定為封閉維護或事故管制，請勿駛入外側車道，請依號誌行駛內側車道。`;
+    closureNotice = "外側車道全線封閉，唯一開放內側車道";
+  } else if (isLateNightHours) {
+    // 深夜時段 (02:00 - 04:00) 直接放原 API 資料
+    fasterLaneId = null;
+    comparisonTitle = `車道交通狀態比較：深夜時段 (02:00 - 04:00) 直接放原 API 原始觀測資料，全線順暢自由流。`;
+    safetyNotice = `深夜時段 (02:00 - 04:00) 依規範直接放原 API 資料：全線車流順暢，請依速限順行，夜間行車請保持安全車距並切勿疲勞駕駛。`;
+  } else if (doubleVerification.isExtremeSituation) {
     // 極端情況已由二次重算確認 (>23 km/h 觸發，重算仍 > 23 km/h)
     const fasterSideLabel = lane1State.travelTimeSec < lane2State.travelTimeSec ? "內側" : "外側";
     fasterLaneId = lane1State.travelTimeSec < lane2State.travelTimeSec ? 1 : 2;
@@ -523,6 +615,9 @@ export function runVdTrafficEstimator(
       comparisonTitle,
       safetyNotice,
       isSignificantDiff,
+      isLaneClosed,
+      closedLaneId,
+      closureNotice,
       trainedSwitchMarginSec: trainedSwitchThresholdSec,
       trainedLaneSelectionConfidence,
       lane1SpeedBiasFactor: learnedParams.lane1SpeedBiasFactor,
@@ -536,6 +631,12 @@ export function runVdTrafficEstimator(
     isExtremeSituation: doubleVerification.isExtremeSituation,
     estimationMethod,
 
+    // 深夜時段 02:00 - 04:00 原始 API 直通標記
+    isLateNightHours,
+    lateNightDirectNotice: isLateNightHours
+      ? "🌙 深夜時段 (02:00 - 04:00) 原始 API 直通模式：已直接放原 API 觀測資料"
+      : undefined,
+
     // RAW vs MODEL Separation & Diagnostics
     rawVsModel: {
       rawApi: {
@@ -548,8 +649,10 @@ export function runVdTrafficEstimator(
         lane2FlowVehPerHour: lane2State.flowVehPerHour,
         lane2OccupancyPercent: lane2State.occupancyPercent,
         overallSpeedKmh: detectorArithmeticMeanSpeedKmh,
-        observationTag: "RAW_API_OBSERVATION",
-        description: "交通部 TDX 原始車輛偵測器 (VD) 即時觀測點速度、流量與佔有率之統計值 (Raw Spot Observations)",
+        observationTag: (isLateNightHours ? "LATE_NIGHT_RAW_API_DIRECT" : "RAW_API_OBSERVATION") as any,
+        description: isLateNightHours
+          ? "深夜時段 (02:00 - 04:00) 依規定直接採用交通部 TDX 原始 API 車輛偵測器 (VD) 即時數據直通輸出"
+          : "交通部 TDX 原始車輛偵測器 (VD) 即時觀測點速度、流量與佔有率之統計值 (Raw Spot Observations)",
       },
       modelEstimate: {
         lane1EquivalentSpeedKmh: lane1State.equivalentTravelSpeedKmh,
@@ -559,15 +662,20 @@ export function runVdTrafficEstimator(
         laneDifferenceSec: diffSec,
         overallEquivalentSpeedKmh: officialEquivalentSpeedKmh,
         overallTravelTimeSec: officialTravelTimeSec,
-        description: "20 個空間微元連續動態積分推估之旅行時間 (T = Σ Δx_i / v_i) 與等效旅行速度 (v_eq = L / (T / 3600))",
+        description: isLateNightHours
+          ? "深夜時段 (02:00 - 04:00) 直接放原 API 資料（直通模式，不加入額外非線性模型調整）"
+          : "20 個空間微元連續動態積分推估之旅行時間 (T = Σ Δx_i / v_i) 與等效旅行速度 (v_eq = L / (T / 3600))",
       },
       modelAdjustment: {
-        lane1DeltaKmh: lane1State.equivalentTravelSpeedKmh - lane1DetectorSpeed,
-        lane2DeltaKmh: lane2State.equivalentTravelSpeedKmh - lane2DetectorSpeed,
-        overallDeltaKmh: officialEquivalentSpeedKmh - detectorArithmeticMeanSpeedKmh,
-        terminologyNotice:
-          "本差異為「模型推估調整量 (Model Adjustment / Model Estimate Difference)」，反映空間連續動態積分與離散點速度之理論差異。目前無歷史真實旅行時間 (Ground Truth)，因此禁止宣稱「降低誤差」或「準確率提升」；模型功能為將離散 VD observation 轉換為空間化動態旅行時間估計。",
+        lane1DeltaKmh: isLateNightHours ? 0 : lane1State.equivalentTravelSpeedKmh - lane1DetectorSpeed,
+        lane2DeltaKmh: isLateNightHours ? 0 : lane2State.equivalentTravelSpeedKmh - lane2DetectorSpeed,
+        overallDeltaKmh: isLateNightHours ? 0 : officialEquivalentSpeedKmh - detectorArithmeticMeanSpeedKmh,
+        terminologyNotice: isLateNightHours
+          ? "深夜時段 02:00 - 04:00 依規範直接放原 API 資料（Direct Raw API Pass-Through）：全線車流極低且為自由流，不進行非線性延遲與模型修正，直接輸出 TDX 車輛偵測器 (VD) 原始即時觀測數據。"
+          : "本差異為「模型推估調整量 (Model Adjustment / Model Estimate Difference)」，反映空間連續動態積分與離散點速度之理論差異。目前無歷史真實旅行時間 (Ground Truth)，因此禁止宣稱「降低誤差」或「準確率提升」；模型功能為將離散 VD observation 轉換為空間化動態旅行時間估計。",
       },
+      isLateNightDirect: isLateNightHours,
+      lateNightBanner: isLateNightHours ? "🌙 深夜時段 (02:00 - 04:00) 原始 API 資料直通模式生效中" : undefined,
       trafficStateValidation: {
         speedDirectionMatch:
           (lane1DetectorSpeed < lane2DetectorSpeed && lane1State.equivalentTravelSpeedKmh < lane2State.equivalentTravelSpeedKmh) ||

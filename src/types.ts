@@ -126,6 +126,8 @@ export interface LaneState {
   occupancyPercent: number;
   densityVehPerKm: number;
   segments: RoadSegmentSlice[]; // 20 slices
+  isClosed?: boolean; // 若一車道全 0 則判定為封閉 (Lane Closure Detected)
+  closureNotice?: string; // 車道封閉告示
 }
 
 export interface LaneComparison {
@@ -136,6 +138,9 @@ export interface LaneComparison {
   comparisonTitle: string; // 嚴格格式：車道交通狀態比較
   safetyNotice: string; // 嚴格格式：行車安全告示
   isSignificantDiff: boolean; // ΔT >= 60
+  isLaneClosed?: boolean; // 是否有一車道封閉
+  closedLaneId?: number; // 封閉車道編號 (1: 內側, 2: 外側)
+  closureNotice?: string; // 封閉特別告示
   
   // 隧道內在線訓練之車道切換與分流決策指標 (Trained Lane Switching & Allocation State)
   trainedSwitchMarginSec?: number; // 經機器學習校準之動態車道切換時間差門檻 (秒)
@@ -282,6 +287,8 @@ export interface RawVsModelComparison {
     supportsLane2Faster: boolean;
     analyticalExplanation: string;
   };
+  isLateNightDirect?: boolean;
+  lateNightBanner?: string;
   dataPipelineSteps: {
     stepNumber: number;
     name: string;
@@ -329,7 +336,11 @@ export interface EstimatedState {
   // 極端情況雙重重算驗證機制 (Double Verification for Extreme Lane Divergence)
   doubleVerification?: DoubleVerificationState;
   isExtremeSituation?: boolean; // 若重算後雙車道速差仍 > 23 km/h，直接顯示並展示 API 原始數據
-  estimationMethod?: "PRIMARY_TRAJECTORY_CALCULUS" | "ALTERNATIVE_ROBUST_FALLBACK";
+  estimationMethod?: "PRIMARY_TRAJECTORY_CALCULUS" | "ALTERNATIVE_ROBUST_FALLBACK" | "LATE_NIGHT_RAW_API_DIRECT";
+
+  // 深夜時段 (02:00 - 04:00) 原始 API 直通模式標記
+  isLateNightHours?: boolean;
+  lateNightDirectNotice?: string;
 
   // RAW vs MODEL Separation & Diagnostic Info
   rawVsModel: RawVsModelComparison;
@@ -408,6 +419,32 @@ export interface DepartureTimeSlot {
   advice: string;
 }
 
+export interface BigDataClusterInfo {
+  dimensionLabel: string; // e.g. "【8月 第3週 星期六】特別日：暑假週末出遊潮"
+  targetMonth: number;
+  targetWeekOfMonth: number;
+  targetDayOfWeek: string;
+  isSpecialDay: boolean;
+  specialDayCategory: string;
+  specialDayDescription: string;
+  totalClusterSamples: number; // 大數據分群樣本數 N
+  meanSpeedKmh: number; // 大數據歷史分群平均車速
+  meanTravelTimeMin: number; // 大數據歷史分群平均旅行時間
+  p50TravelTimeMin: number; // 中位數 P50
+  p85TravelTimeMin: number; // 尖峰 P85
+  stdDevTravelTimeMin: number; // 標準差
+  congestionPeakWindow: string; // 歷史常態易壅塞時段
+  methodologyNote: string;
+  hourlyBreakdown: {
+    hour: number;
+    hourLabel: string; // e.g. "08:00 - 09:00"
+    meanSpeedKmh: number;
+    meanTravelTimeMin: number;
+    congestionLevel: string;
+    samplePoints: number;
+  }[];
+}
+
 export interface DepartureRecommendation {
   origin: string;
   destination: string;
@@ -418,14 +455,20 @@ export interface DepartureRecommendation {
   targetYear: number;
   targetMonth: number;
   targetDay: number;
+  targetWeekOfMonth: number; // 1 ~ 5 (幾月的第幾週)
+  weekOfMonthLabel: string; // e.g. "8月 第3週"
   targetDayOfWeek: string; // e.g. "星期六"
   isWeekend: boolean;
+  isSpecialDay: boolean;
+  specialDayCategory: string;
+  specialDayDescription: string;
   holidayName?: string; // e.g. "中秋節連假", "春節疏運", "一般週末"
   recommendedSlot: DepartureTimeSlot;
   slots: DepartureTimeSlot[];
   insightSummary: string;
   temporalFactor: number; // 考慮日期與時段的壅塞倍率
   trainedSequenceDatasetCount: number; // 用於訓練模型之全序列資料集樣本總數
+  bigDataCluster: BigDataClusterInfo;
   matchedHistoricalSequences: {
     id: string;
     timeFormatted: string;
@@ -435,12 +478,22 @@ export interface DepartureRecommendation {
     corridorRange?: string;
     corridorTravelTimeFormatted?: string;
     holidayTag?: string;
+    monthAndWeek?: string;
+    dayOfWeek?: string;
+    clusterTag?: string;
     congestionLevel: string;
-    similarityScore: number;
+    measuredTravelTimeMin?: number;
+    similarityScore?: number; // 相容舊版欄位
   }[];
   sequenceModelTrainedVersion: number;
   sequenceConfidenceScore: number;
   sequenceTrainingLossMae: number;
+  // 近期 2 小時路況走勢與動態校正指標 (Recent 2-Hour Visitor Trajectory & Big Data Real-time Divergence Correction)
+  calculationSourceType?: "BIG_DATA_EMPIRICAL" | "RECENT_VISITOR_TRAJECTORY" | "HYBRID_CORRECTED";
+  recentTrajectoryPointsCount?: number; // 5分鐘一組之近2小時走勢點數 (約 24~36 組)
+  realtimeBigDataDivergenceRatio?: number; // 即時路況與大數據之偏離率 (%)
+  realtimeCorrectionApplied?: boolean; // 是否因即時路況與大數據不合而自動改用走勢校正
+  recentTrendSpanHours?: number; // 走勢涵蓋時長 (2~3 小時)
 }
 
 export interface CapturedDatasetRecord {

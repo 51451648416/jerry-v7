@@ -88,6 +88,11 @@ export default function Header({
                       即時
                     </span>
                   )}
+                  {(new Date().getHours() === 2 || new Date().getHours() === 3 || (new Date().getHours() === 4 && new Date().getMinutes() === 0)) && (
+                    <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-indigo-50 text-indigo-700 border border-indigo-200 font-mono font-bold shrink-0" title="深夜時段 02:00 - 04:00 依規定直接採用原 API 資料">
+                      🌙 02~04 原API直通
+                    </span>
+                  )}
                 </div>
                 <p className="text-[10px] text-slate-500 hidden sm:block truncate">
                   雙向 20 微元空間積分・全線 0K~54K・出發時間試算

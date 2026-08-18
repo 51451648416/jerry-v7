@@ -12,6 +12,7 @@ import {
   BarChart2,
   TrendingDown,
   TrendingUp,
+  Moon,
 } from "lucide-react";
 import { FinalEstimatorOutput } from "../types";
 import ApiDirectTelemetryTable from "./ApiDirectTelemetryTable";
@@ -58,6 +59,21 @@ export default function RawVsModelDiagnostic({ estimatorOutput }: RawVsModelDiag
 
   return (
     <div className="space-y-6">
+      {/* 0. Late Night Raw Direct Pass-Through Alert Banner */}
+      {estState.isLateNightHours && (
+        <div className="bg-indigo-950/80 border border-indigo-500/50 p-4 rounded-2xl text-indigo-100 flex items-start gap-3 shadow-sm">
+          <Moon className="h-5 w-5 text-indigo-300 shrink-0 mt-0.5" />
+          <div className="space-y-1 text-xs">
+            <div className="font-bold text-sm text-indigo-200">
+              🌙 深夜 02:00 - 04:00 原始 API 直通模式生效中 (Raw API Direct Pass-Through)
+            </div>
+            <p className="text-indigo-300/90 leading-relaxed">
+              依系統規則，深夜時段 02:00 - 04:00 交通量稀少且全線維持自由流速，直接放原 API 資料，不進行延遲補償與波傳播非線性修正 (Model Adjustment Δ = 0 km/h)，直接忠實輸出交通部 TDX 車輛偵測器 (VD) 即時遙測數據。
+            </p>
+          </div>
+        </div>
+      )}
+
       {/* 1. Header & RAW_API_OBSERVATION Banner */}
       <div className="bg-slate-900 border border-slate-800 p-6 rounded-2xl shadow-sm space-y-3">
         <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
