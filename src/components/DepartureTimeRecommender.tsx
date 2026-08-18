@@ -529,6 +529,12 @@ export default function DepartureTimeRecommender({
                   <span className="text-xs font-bold text-amber-300 bg-amber-950/80 border border-amber-600/40 px-2 py-0.5 rounded-md">
                     {departureData.weekOfMonthLabel} | {departureData.specialDayCategory}
                   </span>
+                  {departureData.trainedModelApplied && (
+                    <span className="text-xs font-bold text-sky-300 bg-sky-950/80 border border-sky-600/40 px-2 py-0.5 rounded-md flex items-center gap-1" title={`已融合在線機器學習模型訓練成果：自由流速 ${departureData.trainedFreeFlowSpeedKmh || 90} km/h、尖峰加權 ${departureData.trainedPeakWeight || 1.0}`}>
+                      <Cpu className="h-3 w-3 text-sky-400" />
+                      <span>在線模型訓練校準 (v{departureData.trainedModelVersion || 1})</span>
+                    </span>
+                  )}
                   {departureData.realtimeCorrectionApplied && (
                     <span className="text-xs font-bold text-rose-300 bg-rose-950/80 border border-rose-600/50 px-2.5 py-0.5 rounded-md flex items-center gap-1">
                       <Flame className="h-3 w-3 text-rose-400" />

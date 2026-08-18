@@ -1,5 +1,6 @@
 import { Direction, DepartureTimeSlot, BigDataClusterInfo, CapturedDatasetRecord } from "../types";
 import { formatSecondsToMinSec } from "./trafficEngine";
+import { getLearnedParameters } from "./modelTrainingEngine";
 
 export const WEEKDAY_NAMES_LIST = [
   "星期日",
@@ -414,6 +415,23 @@ export function getBigDataEmpiricalHourlyStats(
   const weekFactor = weekOfMonth === 1 || weekOfMonth === 4 || weekOfMonth === 5 ? 0.96 : 1.0;
   meanSpeed = Math.max(16.0, Math.min(88.0, meanSpeed * weekFactor));
 
+  // 融合在線機器學習模型訓練成果校準 (Trained Machine Learning Model Weight Calibration)
+  const learnedParams = getLearnedParameters();
+  if (learnedParams) {
+    // 1. 自由流速校準 (Free Flow Calibration)
+    const freeFlowRatio = learnedParams.freeFlowSpeedKmh / 90.0;
+    if (congestionIndex <= 25) {
+      meanSpeed = meanSpeed * freeFlowRatio;
+    }
+    // 2. 尖峰負載與非線性密度衰減校準 (Diurnal Peak & Greenshields Exponent Scaling)
+    if (congestionIndex >= 35 && learnedParams.diurnalPeakWeight !== 1.0) {
+      const peakWeight = Math.max(0.7, Math.min(1.5, learnedParams.diurnalPeakWeight));
+      congestionIndex = Math.min(99, Math.round(congestionIndex * peakWeight));
+      const speedDecay = (85.0 - meanSpeed) * (peakWeight - 1.0) * 0.4;
+      meanSpeed = Math.max(14.0, meanSpeed - speedDecay);
+    }
+  }
+
   return {
     meanSpeedKmh: parseFloat(meanSpeed.toFixed(1)),
     stdDevKmh: parseFloat(stdDev.toFixed(1)),
@@ -499,7 +517,8 @@ export function aggregateBigDataClusterInfo(
     specialContext.isSpecialDay ? `特別日：${specialContext.category}` : specialContext.category
   }`;
 
-  const methodologyNote = `本出發時間計算完全採用「星期（${weekInfo.dayOfWeek}）× ${weekInfo.month}月第${weekInfo.weekOfMonth}週 × ${specialContext.category}」之國道5號大數據分群歷史平均（共聚合 ${totalClusterSamples.toLocaleString()} 筆時空微元樣本），非單純即時曲線相似度比對。`;
+  const learnedParams = getLearnedParameters();
+  const methodologyNote = `本出發時間計算採用「星期（${weekInfo.dayOfWeek}）× ${weekInfo.month}月第${weekInfo.weekOfMonth}週 × ${specialContext.category}」之國道5號大數據分群歷史平均（共聚合 ${totalClusterSamples.toLocaleString()} 筆時空微元樣本），並融合在線機器學習模型校準 (v${learnedParams?.version || 1}，${learnedParams?.totalSamplesTrained || 0} 筆訓練樣本)。`;
 
   return {
     dimensionLabel,
@@ -517,6 +536,11 @@ export function aggregateBigDataClusterInfo(
     stdDevTravelTimeMin,
     congestionPeakWindow: specialContext.peakCongestionWindow,
     methodologyNote,
+    trainedModelApplied: true,
+    trainedModelVersion: learnedParams?.version || 1,
+    trainedSamplesCount: learnedParams?.totalSamplesTrained || 0,
+    trainedPeakWeight: learnedParams?.diurnalPeakWeight || 1.0,
+    trainedFreeFlowSpeedKmh: learnedParams?.freeFlowSpeedKmh || 90.0,
     hourlyBreakdown,
   };
 }

@@ -435,6 +435,12 @@ export interface BigDataClusterInfo {
   stdDevTravelTimeMin: number; // 標準差
   congestionPeakWindow: string; // 歷史常態易壅塞時段
   methodologyNote: string;
+  // 融合在線機器學習模型參數校準 (Trained Model Weight Integration)
+  trainedModelApplied?: boolean;
+  trainedModelVersion?: number;
+  trainedSamplesCount?: number;
+  trainedPeakWeight?: number;
+  trainedFreeFlowSpeedKmh?: number;
   hourlyBreakdown: {
     hour: number;
     hourLabel: string; // e.g. "08:00 - 09:00"
@@ -488,6 +494,12 @@ export interface DepartureRecommendation {
   sequenceModelTrainedVersion: number;
   sequenceConfidenceScore: number;
   sequenceTrainingLossMae: number;
+  // 融合在線機器學習模型參數校準 (Trained Model Parameters Applied in Departure Engine)
+  trainedModelApplied?: boolean;
+  trainedModelVersion?: number;
+  trainedSamplesCount?: number;
+  trainedPeakWeight?: number;
+  trainedFreeFlowSpeedKmh?: number;
   // 近期 2 小時路況走勢與動態校正指標 (Recent 2-Hour Visitor Trajectory & Big Data Real-time Divergence Correction)
   calculationSourceType?: "BIG_DATA_EMPIRICAL" | "RECENT_VISITOR_TRAJECTORY" | "HYBRID_CORRECTED";
   recentTrajectoryPointsCount?: number; // 5分鐘一組之近2小時走勢點數 (約 24~36 組)

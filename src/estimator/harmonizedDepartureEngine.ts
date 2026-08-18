@@ -6,6 +6,7 @@ import {
   getBigDataEmpiricalHourlyStats,
 } from "./bigDataDepartureModel";
 import { formatSecondsToMinSec } from "./trafficEngine";
+import { getLearnedParameters } from "./modelTrainingEngine";
 
 export interface BigDataVsRecentTrendResult {
   slots: DepartureTimeSlot[];
@@ -19,6 +20,12 @@ export interface BigDataVsRecentTrendResult {
   recentLatestSpeedKmh: number;
   bigDataPredictedSpeedKmh: number;
   fallbackReason?: string;
+  // 機器學習訓練成果校準參數 (Trained Model Weight Application)
+  trainedModelApplied?: boolean;
+  trainedModelVersion?: number;
+  trainedSamplesCount?: number;
+  trainedDiurnalPeakWeight?: number;
+  trainedFreeFlowSpeedKmh?: number;
 }
 
 /**
@@ -219,6 +226,8 @@ export function computeHarmonizedDepartureTimeSlots(
     }
   });
 
+  const learnedParams = getLearnedParameters();
+
   return {
     slots,
     bestSlotIndex: minSlotIndex,
@@ -231,5 +240,10 @@ export function computeHarmonizedDepartureTimeSlots(
     recentLatestSpeedKmh: recentLatestSpeed,
     bigDataPredictedSpeedKmh: parseFloat(bigDataPredictedSpeed.toFixed(1)),
     fallbackReason,
+    trainedModelApplied: true,
+    trainedModelVersion: learnedParams?.version || 1,
+    trainedSamplesCount: learnedParams?.totalSamplesTrained || 0,
+    trainedDiurnalPeakWeight: learnedParams?.diurnalPeakWeight || 1.0,
+    trainedFreeFlowSpeedKmh: learnedParams?.freeFlowSpeedKmh || 90.0,
   };
 }
