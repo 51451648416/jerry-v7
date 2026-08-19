@@ -2,6 +2,12 @@ import { CapturedDatasetRecord, Direction, FinalEstimatorOutput } from "../types
 import { trainModelOnDataset, getLearnedParameters } from "../estimator/modelTrainingEngine";
 
 const LOCAL_STORAGE_DATASET_KEY = "HSUEHSHAN_CAPTURED_DATASET_V1";
+const CANDIDATE_STORAGE_KEYS = [
+  "HSUEHSHAN_CAPTURED_DATASET_V1",
+  "HSUEHSHAN_CAPTURED_DATASET_V2",
+  "HSUEHSHAN_CAPTURED_DATASET",
+  "HSUEHSHAN_DATASET_RECORDS",
+];
 const MAX_DATASET_STORAGE_LIMIT = 500;
 
 const WEEKDAY_NAMES = ["星期日", "星期一", "星期二", "星期三", "星期四", "星期五", "星期六"];
@@ -207,17 +213,36 @@ function getInitialSeedDataset(): CapturedDatasetRecord[] {
 
 /**
  * 讀取目前儲存的完整偵測數據集 (Dataset)
+ * 自動檢索所有可能之版本鍵值，確保使用者先前累積的任何實測資料絕不遺失
  */
 export function getStoredDataset(): CapturedDatasetRecord[] {
   try {
-    const raw = localStorage.getItem(LOCAL_STORAGE_DATASET_KEY);
-    if (!raw) {
-      const initial = getInitialSeedDataset();
-      localStorage.setItem(LOCAL_STORAGE_DATASET_KEY, JSON.stringify(initial));
-      return initial;
+    let bestList: CapturedDatasetRecord[] = [];
+
+    // 依序檢索所有可能存在的歷史/當前儲存鍵值
+    for (const key of CANDIDATE_STORAGE_KEYS) {
+      try {
+        const raw = localStorage.getItem(key);
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          if (Array.isArray(parsed) && parsed.length > bestList.length) {
+            bestList = parsed;
+          }
+        }
+      } catch {
+        // ignore
+      }
     }
-    const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed : getInitialSeedDataset();
+
+    if (bestList.length > 0) {
+      // 確保同步寫回標準主鍵
+      localStorage.setItem(LOCAL_STORAGE_DATASET_KEY, JSON.stringify(bestList));
+      return bestList;
+    }
+
+    const initial = getInitialSeedDataset();
+    localStorage.setItem(LOCAL_STORAGE_DATASET_KEY, JSON.stringify(initial));
+    return initial;
   } catch (err) {
     console.warn("讀取本機 Dataset 失敗，使用初始種子資料庫", err);
     return getInitialSeedDataset();

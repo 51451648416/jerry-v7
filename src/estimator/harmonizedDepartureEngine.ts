@@ -47,6 +47,15 @@ export function computeHarmonizedDepartureTimeSlots(
   const targetHour = targetDate.getHours();
   const targetMin = targetDate.getMinutes();
 
+  // 判定是否為查詢「當前即時時段」（即今日且與現在時間相差在 3 小時以內）
+  const now = new Date();
+  const isSameDay =
+    targetDate.getFullYear() === now.getFullYear() &&
+    targetDate.getMonth() === now.getMonth() &&
+    targetDate.getDate() === now.getDate();
+  const timeDiffHours = Math.abs(targetDate.getTime() - now.getTime()) / (3600 * 1000);
+  const isQueryingLiveWindow = isSameDay && timeDiffHours <= 3.0;
+
   // 1. 取得近 2 小時訪客路況走勢（5分鐘1組，最多 24~36 組，只保留近 3 小時）
   const recentTrend = getRecent2HourDeduplicatedTrajectory(direction);
   const recentPointCount = recentTrend.pointCount;
@@ -74,28 +83,35 @@ export function computeHarmonizedDepartureTimeSlots(
   const minRatio = targetMin / 60;
   const bigDataPredictedSpeed = curHourly.meanSpeedKmh * (1 - minRatio) + nextHourly.meanSpeedKmh * minRatio;
 
-  // 3. 評估即時路況與大數據之差異度 (Divergence Check)
-  const speedDifference = Math.abs(recentLatestSpeed - bigDataPredictedSpeed);
-  const divergenceRatio = parseFloat(
-    ((speedDifference / Math.max(20, bigDataPredictedSpeed)) * 100).toFixed(1)
-  );
+  // 3. 評估即時路況與大數據之差異度 (僅在查詢「當前即時窗口」時執行比對校正)
+  const speedDifference = isQueryingLiveWindow ? Math.abs(recentLatestSpeed - bigDataPredictedSpeed) : 0;
+  const divergenceRatio = isQueryingLiveWindow
+    ? parseFloat(((speedDifference / Math.max(20, bigDataPredictedSpeed)) * 100).toFixed(1))
+    : 0;
 
   // 判定是否偏離過大 (速差 > 18 km/h 或偏離比例 > 25%)
-  const isDivergenceTooLarge = speedDifference >= 18 || divergenceRatio >= 28.0;
+  const isDivergenceTooLarge = isQueryingLiveWindow && (speedDifference >= 18 || divergenceRatio >= 28.0);
   const hasBigData = bigDataCluster.totalClusterSamples >= 10;
 
   let sourceType: "BIG_DATA_EMPIRICAL" | "RECENT_VISITOR_TRAJECTORY" | "HYBRID_CORRECTED" = "BIG_DATA_EMPIRICAL";
   let realtimeCorrectionApplied = false;
   let fallbackReason = "";
 
-  if (!hasBigData) {
-    sourceType = "RECENT_VISITOR_TRAJECTORY";
-    realtimeCorrectionApplied = true;
-    fallbackReason = "該時段無足夠歷史大數據樣本，完全採用近 2 小時訪客路況走勢（5分鐘1組共36組）進行推估。";
-  } else if (isDivergenceTooLarge) {
-    sourceType = "HYBRID_CORRECTED";
-    realtimeCorrectionApplied = true;
-    fallbackReason = `即時觀測車速 (${recentLatestSpeed} km/h) 與大數據歷史常態 (${bigDataPredictedSpeed.toFixed(1)} km/h) 偏離達 ${divergenceRatio}% (速差 ${speedDifference.toFixed(1)} km/h)，已自動改以近 2 小時訪客走勢趨勢進行即時動態校正！`;
+  if (isQueryingLiveWindow) {
+    if (!hasBigData) {
+      sourceType = "RECENT_VISITOR_TRAJECTORY";
+      realtimeCorrectionApplied = true;
+      fallbackReason = "該時段無足夠歷史大數據樣本，完全採用近 2 小時訪客路況走勢（5分鐘1組共36組）進行推估。";
+    } else if (isDivergenceTooLarge) {
+      sourceType = "HYBRID_CORRECTED";
+      realtimeCorrectionApplied = true;
+      fallbackReason = `即時觀測車速 (${recentLatestSpeed} km/h) 與大數據歷史常態 (${bigDataPredictedSpeed.toFixed(1)} km/h) 偏離達 ${divergenceRatio}% (速差 ${speedDifference.toFixed(1)} km/h)，已自動改以近 2 小時訪客走勢趨勢進行即時動態校正！`;
+    }
+  } else {
+    // 查詢未來日期/特定節假日：完全以該特定「月份×週次×星期×節日」之大數據多維分群模型進行獨立預測
+    sourceType = "BIG_DATA_EMPIRICAL";
+    realtimeCorrectionApplied = false;
+    fallbackReason = `已依據【${weekInfo.month}月第${weekInfo.weekOfMonth}週 ${weekInfo.dayOfWeek}】${specialContext.category} 之多維大數據歷史經驗矩陣進行高精度推估。`;
   }
 
   // 4. 計算各出發時段之旅行時間 (依特定幾點幾分偏移)
@@ -132,26 +148,29 @@ export function computeHarmonizedDepartureTimeSlots(
     const slotBigDataSpeed = hStat.meanSpeedKmh * (1 - mRatio) + nStat.meanSpeedKmh * mRatio;
     const slotCongestion = Math.round(hStat.congestionIndex * (1 - mRatio) + nStat.congestionIndex * mRatio);
 
-    // 近期訪客走勢之趨勢外插修正量
-    // 若走勢呈遞減（壅塞加劇），推估後續時段車速可能進一步下降；若趨勢好轉則反之
-    const trendMultiplier = recentTrend.trend === "INCREASING" ? -0.15 : recentTrend.trend === "DECREASING" ? 0.12 : 0;
-    const trendProjectedSpeed = Math.max(15, Math.min(88, recentLatestSpeed + (offset / 60) * recentTrend.speedDelta2h * 0.5 + trendMultiplier * 10));
-
     let finalSpeed = slotBigDataSpeed;
-    if (sourceType === "RECENT_VISITOR_TRAJECTORY") {
-      finalSpeed = trendProjectedSpeed;
-    } else if (sourceType === "HYBRID_CORRECTED") {
-      // 大數據與即時走勢依時間衰減加權融合：近時段偏向即時走勢，遠時段回歸大數據趨勢
-      const decayWeight = Math.max(0.2, 0.75 - Math.abs(offset) / 240);
-      finalSpeed = trendProjectedSpeed * decayWeight + slotBigDataSpeed * (1 - decayWeight);
+
+    if (isQueryingLiveWindow) {
+      // 近期訪客走勢之趨勢外插修正量
+      const trendMultiplier = recentTrend.trend === "INCREASING" ? -0.15 : recentTrend.trend === "DECREASING" ? 0.12 : 0;
+      const trendProjectedSpeed = Math.max(15, Math.min(88, recentLatestSpeed + (offset / 60) * recentTrend.speedDelta2h * 0.5 + trendMultiplier * 10));
+
+      if (sourceType === "RECENT_VISITOR_TRAJECTORY") {
+        finalSpeed = trendProjectedSpeed;
+      } else if (sourceType === "HYBRID_CORRECTED") {
+        const decayWeight = Math.max(0.2, 0.75 - Math.abs(offset) / 240);
+        finalSpeed = trendProjectedSpeed * decayWeight + slotBigDataSpeed * (1 - decayWeight);
+      } else {
+        finalSpeed = slotBigDataSpeed * 0.70 + (routeDistanceKm / (baseCurrentTravelSec / 3600)) * 0.30;
+      }
     } else {
-      // 標準大數據加即時基線 (70% 大數據, 30% 即時)
-      finalSpeed = slotBigDataSpeed * 0.75 + (routeDistanceKm / (baseCurrentTravelSec / 3600)) * 0.25;
+      // 查詢未來日期時，直接 100% 套用該特定時段之大數據統計預測
+      finalSpeed = slotBigDataSpeed;
     }
 
     finalSpeed = Math.max(12, Math.min(90, finalSpeed));
 
-    // 深夜時段 (02:00 - 04:00) 直接放原 API 資料
+    // 深夜時段 (02:00 - 04:00) 直接放原 API / 自由流資料
     const isSlotLateNight = slotHour === 2 || slotHour === 3 || (slotHour === 4 && slotMin === 0);
     if (isSlotLateNight) {
       finalSpeed = Math.max(80, finalSpeed);

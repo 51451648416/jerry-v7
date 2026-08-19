@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useState } from "react";
 import {
   Compass,
   Zap,
@@ -12,6 +12,9 @@ import {
   Cpu,
   CheckCircle2,
   AlertTriangle,
+  SlidersHorizontal,
+  ChevronDown,
+  ChevronUp,
 } from "lucide-react";
 import { FinalEstimatorOutput, Direction } from "../types";
 import SpeedometerGauge from "./SpeedometerGauge";
@@ -28,6 +31,7 @@ export default function SimpleLaneRecommendation({
   direction,
   onOpenAdvanced,
 }: SimpleLaneRecommendationProps) {
+  const [showAdvancedApiOptions, setShowAdvancedApiOptions] = useState(false);
   const estState = estimatorOutput.estimated_state;
   const lane1 = estState.laneComparison.lane1;
   const lane2 = estState.laneComparison.lane2;
@@ -232,22 +236,45 @@ export default function SimpleLaneRecommendation({
         </div>
       </div>
 
-      {/* 3. API 直接傳輸實時數據展示與雙重重算驗證 (Direct API Telemetry & Double Verification) */}
-      <ApiDirectTelemetryTable
-        doubleVerification={doubleVerification}
-        isExtremeSituation={isExtremeSituation}
-        defaultExpanded={isExtremeSituation || doubleVerification?.triggered}
-      />
-
-      {/* 4. Advanced Modal Trigger */}
-      <div className="flex justify-end pt-1">
+      {/* 3. 底部灰色進階選項：API 原始數據與雙重驗證 (Collapsed by default in a small grey bottom box) */}
+      <div className="bg-slate-100 border border-slate-200 rounded-2xl overflow-hidden shadow-xs">
         <button
-          onClick={onOpenAdvanced}
-          className="text-xs text-slate-500 hover:text-emerald-700 flex items-center gap-1.5 transition py-1 px-2.5 rounded-lg hover:bg-slate-100 cursor-pointer font-medium"
+          onClick={() => setShowAdvancedApiOptions(!showAdvancedApiOptions)}
+          className="w-full px-4 py-2.5 flex items-center justify-between text-xs font-semibold text-slate-600 hover:text-slate-900 transition cursor-pointer bg-slate-100 hover:bg-slate-200/80"
         >
-          <span>進階功能：車道切換模型訓練、RAW vs MODEL 診斷與 20 微元連續積分</span>
-          <ExternalLink className="h-3 w-3" />
+          <div className="flex items-center gap-2">
+            <SlidersHorizontal className="h-3.5 w-3.5 text-slate-500" />
+            <span>進階選項：TDX API 原始數據與雙重驗證</span>
+          </div>
+          <div className="flex items-center gap-1 text-[11px] text-slate-500 font-mono">
+            <span>{showAdvancedApiOptions ? "收合" : "展開"}</span>
+            {showAdvancedApiOptions ? (
+              <ChevronUp className="h-3.5 w-3.5" />
+            ) : (
+              <ChevronDown className="h-3.5 w-3.5" />
+            )}
+          </div>
         </button>
+
+        {showAdvancedApiOptions && (
+          <div className="p-3 border-t border-slate-200 bg-white space-y-3">
+            <ApiDirectTelemetryTable
+              doubleVerification={doubleVerification}
+              isExtremeSituation={isExtremeSituation}
+              defaultExpanded={true}
+            />
+
+            <div className="flex justify-end pt-1">
+              <button
+                onClick={onOpenAdvanced}
+                className="text-xs text-slate-500 hover:text-emerald-700 flex items-center gap-1.5 transition py-1 px-2.5 rounded-lg hover:bg-slate-100 cursor-pointer font-medium"
+              >
+                <span>進階功能：車道切換模型訓練、RAW vs MODEL 診斷與 20 微元連續積分</span>
+                <ExternalLink className="h-3 w-3" />
+              </button>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

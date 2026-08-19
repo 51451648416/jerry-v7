@@ -423,48 +423,33 @@ export default function DepartureTimeRecommender({
 
         {/* 快捷熱門路線標籤 */}
         <div className="flex flex-wrap items-center gap-2 pt-1 text-xs">
-          <span className="text-slate-400 text-[11px] font-bold">熱門路線快捷 (點選設定並跳至首頁)：</span>
+          <span className="text-slate-400 text-[11px] font-bold">熱門路線快捷：</span>
           <button
-            onClick={() => {
-              handleQuickPreset(0.0, 30.0, "S");
-              onSelectRoute?.(0.0, 30.0, "南港 ↔ 礁溪 (30K)");
-            }}
+            onClick={() => handleQuickPreset(0.0, 30.0, "S")}
             className="px-3 py-1 bg-slate-100 hover:bg-emerald-100 hover:text-emerald-800 text-slate-700 rounded-xl transition cursor-pointer font-medium"
           >
             南港 0K → 礁溪 30K
           </button>
           <button
-            onClick={() => {
-              handleQuickPreset(0.0, 46.0, "S");
-              onSelectRoute?.(0.0, 46.0, "南港 ↔ 羅東 (46K)");
-            }}
+            onClick={() => handleQuickPreset(0.0, 46.0, "S")}
             className="px-3 py-1 bg-slate-100 hover:bg-emerald-100 hover:text-emerald-800 text-slate-700 rounded-xl transition cursor-pointer font-medium"
           >
             南港 0K → 羅東 46K
           </button>
           <button
-            onClick={() => {
-              handleQuickPreset(0.0, 54.0, "S");
-              onSelectRoute?.(0.0, 54.0, "南港 ↔ 蘇澳 (54K)");
-            }}
+            onClick={() => handleQuickPreset(0.0, 54.0, "S")}
             className="px-3 py-1 bg-slate-100 hover:bg-emerald-100 hover:text-emerald-800 text-slate-700 rounded-xl transition cursor-pointer font-medium"
           >
             南港 0K → 蘇澳 54K (蘇花改)
           </button>
           <button
-            onClick={() => {
-              handleQuickPreset(46.0, 0.0, "N");
-              onSelectRoute?.(46.0, 0.0, "羅東 ↔ 南港 (46K)");
-            }}
+            onClick={() => handleQuickPreset(46.0, 0.0, "N")}
             className="px-3 py-1 bg-slate-100 hover:bg-emerald-100 hover:text-emerald-800 text-slate-700 rounded-xl transition cursor-pointer font-medium"
           >
             羅東 46K → 南港 0K (北上)
           </button>
           <button
-            onClick={() => {
-              handleQuickPreset(30.0, 0.0, "N");
-              onSelectRoute?.(30.0, 0.0, "礁溪 ↔ 南港 (30K)");
-            }}
+            onClick={() => handleQuickPreset(30.0, 0.0, "N")}
             className="px-3 py-1 bg-slate-100 hover:bg-emerald-100 hover:text-emerald-800 text-slate-700 rounded-xl transition cursor-pointer font-medium"
           >
             礁溪 30K → 南港 0K (北上)

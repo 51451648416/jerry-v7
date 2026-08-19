@@ -480,8 +480,57 @@ export default function App() {
 
         {/* TAB 1: 雪隧與車道指引 (GIS 地圖 + 車道推薦 + 剖面圖) */}
         {activeTab === "lane" && (
-          <div className="space-y-5">
-            {/* 若超過 2 分鐘未更新即時數據，跳轉至更新待命畫面；若尚未開始分析顯示實景封面；分析後顯示隧道標準橫斷面 */}
+          <div className="space-y-4">
+            {/* 頂部核心主按鈕列：按我分析哪一邊車道比較快 (Always at the top) */}
+            <div className="bg-white border border-slate-200 p-4 sm:p-5 rounded-3xl shadow-sm flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
+              {/* 方向選擇切換 */}
+              <div className="flex items-center bg-slate-100 p-1 rounded-2xl border border-slate-200 text-xs font-bold shrink-0 self-start sm:self-auto">
+                <button
+                  onClick={() => handleDirectionChange("S")}
+                  className={`px-3.5 py-2 rounded-xl transition cursor-pointer ${
+                    direction === "S"
+                      ? "bg-emerald-600 text-white shadow-xs"
+                      : "text-slate-600 hover:text-slate-900"
+                  }`}
+                >
+                  南向往宜蘭 (S)
+                </button>
+                <button
+                  onClick={() => handleDirectionChange("N")}
+                  className={`px-3.5 py-2 rounded-xl transition cursor-pointer ${
+                    direction === "N"
+                      ? "bg-emerald-600 text-white shadow-xs"
+                      : "text-slate-600 hover:text-slate-900"
+                  }`}
+                >
+                  北向往台北 (N)
+                </button>
+              </div>
+
+              {/* 核心主按鈕：按我分析哪一邊車道比較快 */}
+              <button
+                disabled={isLoading || cooldown > 0}
+                onClick={() => fetchTdxAndEstimate(direction)}
+                className={`w-full sm:flex-1 sm:max-w-md py-3.5 px-6 rounded-2xl font-black text-sm sm:text-base flex items-center justify-center gap-2.5 transition shadow-md cursor-pointer ${
+                  isLoading
+                    ? "bg-slate-100 text-slate-400 border border-slate-200 cursor-not-allowed"
+                    : cooldown > 0
+                    ? "bg-slate-100 text-slate-500 border border-slate-200 cursor-not-allowed font-mono text-xs"
+                    : "bg-emerald-600 hover:bg-emerald-500 text-white shadow-emerald-600/25 active:scale-[0.98]"
+                }`}
+              >
+                <RefreshCw className={`h-4 w-4 ${isLoading ? "animate-spin text-slate-400" : ""}`} />
+                <span>
+                  {isLoading
+                    ? "正在分析哪一邊車道比較快..."
+                    : cooldown > 0
+                    ? `冷卻中 (${cooldown} 秒後可更新)`
+                    : "按我分析哪一邊車道比較快"}
+                </span>
+              </button>
+            </div>
+
+            {/* 若超過 2 分鐘未更新即時數據，跳轉至更新待命畫面 */}
             {isStaleOverTwoMinutes ? (
               <TwoMinuteStalePrompt
                 direction={direction}
@@ -501,44 +550,7 @@ export default function App() {
                 onSelectVehicleMode={handleSelectVehicleMode}
               />
             ) : (
-              <div className="space-y-3">
-                {/* 頂部快速重整列 (Compact Bar) */}
-                <div className="flex flex-wrap items-center justify-between gap-3 bg-white border border-slate-200 px-4 py-2.5 rounded-2xl shadow-xs">
-                  <div className="flex items-center gap-2 text-xs">
-                    <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse" />
-                    <span className="font-bold text-slate-800">
-                      即時連線分析中（{direction === "S" ? "南向往宜蘭" : "北向往台北"}）
-                    </span>
-                    {selectedRoute && (
-                      <span className="text-[10px] bg-slate-100 text-slate-600 px-2 py-0.5 rounded-full font-mono">
-                        {selectedRoute.label}
-                      </span>
-                    )}
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <button
-                      disabled={isLoading || cooldown > 0}
-                      onClick={() => fetchTdxAndEstimate(direction)}
-                      className={`px-3.5 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 transition ${
-                        isLoading
-                          ? "bg-slate-100 text-slate-400 cursor-not-allowed"
-                          : cooldown > 0
-                          ? "bg-slate-100 text-slate-500 cursor-not-allowed font-mono text-[11px]"
-                          : "bg-emerald-600 hover:bg-emerald-500 text-white cursor-pointer shadow-sm"
-                      }`}
-                    >
-                      <RefreshCw className={`h-3.5 w-3.5 ${isLoading ? "animate-spin" : ""}`} />
-                      <span>
-                        {isLoading
-                          ? "分析中..."
-                          : cooldown > 0
-                          ? `冷卻中 (${cooldown}s)`
-                          : "更新路況"}
-                      </span>
-                    </button>
-                  </div>
-                </div>
-
+              <div className="space-y-4">
                 {/* 隧道大尺寸標準橫斷面（剖面圖）＋ 頂部直接流速結論 */}
                 <TunnelCrossSectionView
                   direction={direction}
@@ -547,69 +559,8 @@ export default function App() {
                   onRefresh={() => fetchTdxAndEstimate(direction)}
                   isLoading={isLoading}
                 />
-              </div>
-            )}
 
-            {/* Initial Standby State when User First Enters */}
-            {!isStaleOverTwoMinutes && !hasStartedAnalysis && !estimatorOutput && !isLoading && (
-              <div className="bg-white border border-slate-200 p-6 sm:p-8 rounded-3xl shadow-sm space-y-6 text-center max-w-3xl mx-auto my-2">
-                <div className="space-y-2">
-                  <div className="inline-flex items-center gap-2 px-3.5 py-1 rounded-full bg-slate-100 border border-slate-200 text-slate-600 text-xs font-mono">
-                    <span>系統狀態變數：{analysisProgress}% (待啟動分析)</span>
-                  </div>
-                  <h2 className="text-xl sm:text-2xl font-black text-slate-900 tracking-tight">
-                    雪山隧道 13km 實時車道流速與車道指引
-                  </h2>
-                  <p className="text-xs text-slate-500 max-w-xl mx-auto leading-relaxed">
-                    全線 13 公里劃設連續雙白實線（嚴禁變換車道）。透過 20 微元空間積分，為您在入洞前推估最佳行駛車道與預估時間。
-                  </p>
-                </div>
-
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 font-mono">
-                  <div className="bg-slate-50 p-3.5 rounded-2xl border border-slate-200">
-                    <span className="text-[10px] text-slate-500 block font-sans">狀態變數</span>
-                    <span className="text-lg font-black text-slate-700">0%</span>
-                  </div>
-                  <div className="bg-slate-50 p-3.5 rounded-2xl border border-slate-200">
-                    <span className="text-[10px] text-slate-500 block font-sans">預估旅行時間</span>
-                    <span className="text-lg font-black text-slate-700">0 秒</span>
-                  </div>
-                  <div className="bg-slate-50 p-3.5 rounded-2xl border border-slate-200">
-                    <span className="text-[10px] text-slate-500 block font-sans">等效旅行速度</span>
-                    <span className="text-lg font-black text-slate-700">0.00 km/h</span>
-                  </div>
-                  <div className="bg-slate-50 p-3.5 rounded-2xl border border-slate-200">
-                    <span className="text-[10px] text-slate-500 block font-sans">微元切片</span>
-                    <span className="text-lg font-black text-slate-700">0 / 20</span>
-                  </div>
-                </div>
-
-                <div className="pt-1">
-                  <button
-                    disabled={isLoading || cooldown > 0}
-                    onClick={() => fetchTdxAndEstimate(direction)}
-                    className={`w-full sm:w-auto px-8 py-3.5 font-extrabold rounded-2xl shadow-lg text-sm transition flex items-center justify-center gap-2.5 mx-auto ${
-                      isLoading || cooldown > 0
-                        ? "bg-slate-200 text-slate-500 border border-slate-300 cursor-not-allowed shadow-none font-mono"
-                        : "bg-emerald-600 hover:bg-emerald-500 text-white shadow-emerald-600/20 cursor-pointer"
-                    }`}
-                  >
-                    <Activity className="h-5 w-5" />
-                    <span>
-                      {isLoading
-                        ? "分析計算中..."
-                        : cooldown > 0
-                        ? `本機設備冷卻中（${cooldown} 秒後可再次更新）`
-                        : "啟動即時 GIS 地圖與車道分析 (變數變更為 100%)"}
-                    </span>
-                  </button>
-                </div>
-              </div>
-            )}
-
-            {/* GIS Map & Lane Guidance Grid (當未過期且已啟動時顯示) */}
-            {!isStaleOverTwoMinutes && (hasStartedAnalysis || estimatorOutput) && (
-              <div className="space-y-6 pt-2">
+                {/* GIS Map & Lane Guidance Grid */}
                 <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
                   {/* Left: GIS Tunnel Map */}
                   <div className="lg:col-span-7 xl:col-span-8 space-y-4">

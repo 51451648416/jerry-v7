@@ -25,23 +25,37 @@ export const BASELINE_MODEL_PARAMETERS: LearnedModelParameters = {
 };
 
 const STORAGE_KEY_LEARNED_PARAMS = "HSUEHSHAN_LEARNED_MODEL_WEIGHTS_V2";
+const CANDIDATE_PARAMS_KEYS = [
+  "HSUEHSHAN_LEARNED_MODEL_WEIGHTS_V2",
+  "HSUEHSHAN_LEARNED_MODEL_WEIGHTS_V1",
+  "HSUEHSHAN_LEARNED_MODEL_WEIGHTS",
+];
 const STORAGE_KEY_TRAIN_HISTORY = "HSUEHSHAN_TRAINING_EPOCH_HISTORY_V2";
+const CANDIDATE_HISTORY_KEYS = [
+  "HSUEHSHAN_TRAINING_EPOCH_HISTORY_V2",
+  "HSUEHSHAN_TRAINING_EPOCH_HISTORY_V1",
+  "HSUEHSHAN_TRAINING_EPOCH_HISTORY",
+];
 
 /**
- * 取得當前已學習/校準的最佳模型參數 (持久化於本機儲存)
+ * 取得當前已學習/校準的最佳模型參數 (持久化於本機儲存，自動向下相容所有歷史鍵值)
  */
 export function getLearnedParameters(): LearnedModelParameters {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY_LEARNED_PARAMS);
-    if (raw) {
-      const parsed = JSON.parse(raw);
-      return {
-        ...BASELINE_MODEL_PARAMETERS,
-        ...parsed,
-      };
+  for (const key of CANDIDATE_PARAMS_KEYS) {
+    try {
+      const raw = localStorage.getItem(key);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (parsed && typeof parsed === "object") {
+          return {
+            ...BASELINE_MODEL_PARAMETERS,
+            ...parsed,
+          };
+        }
+      }
+    } catch (e) {
+      // continue checking
     }
-  } catch (e) {
-    console.warn("Failed to load learned parameters:", e);
   }
   return { ...BASELINE_MODEL_PARAMETERS };
 }
@@ -77,16 +91,21 @@ export function resetParametersToBaseline(): LearnedModelParameters {
 }
 
 /**
- * 取得歷史訓練 Epoch 損失曲線紀錄 (包含車道切換準確率)
+ * 取得歷史訓練 Epoch 損失曲線紀錄 (包含車道切換準確率，自動支援所有歷史儲存鍵)
  */
 export function getTrainingEpochHistory(): TrainingEpochRecord[] {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY_TRAIN_HISTORY);
-    if (raw) {
-      return JSON.parse(raw);
+  for (const key of CANDIDATE_HISTORY_KEYS) {
+    try {
+      const raw = localStorage.getItem(key);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          return parsed;
+        }
+      }
+    } catch (e) {
+      // continue checking
     }
-  } catch (e) {
-    console.warn("Failed to load epoch history:", e);
   }
   // 預設提供基準收斂樣本
   return [
