@@ -19,9 +19,13 @@
     <meta name="robots" content="index, follow" />
     <meta name="theme-color" content="#059669" />
 
+    <!-- Canonical URL (鎖定正式網址) -->
+    <link rel="canonical" href="https://jerry-sepia.vercel.app/" />
+
     <!-- Open Graph / Facebook -->
     <meta property="og:type" content="website" />
     <meta property="og:locale" content="zh_TW" />
+    <meta property="og:url" content="https://jerry-sepia.vercel.app/" />
     <meta property="og:title" content="餅乾 - 國道5號雪山隧道即時車流分析與CCTV監控系統 | 0K~54K 全線即時路況・內外車道推薦與延遲分析" />
     <meta
       property="og:description"
@@ -37,14 +41,14 @@
       content="餅乾雪山隧道即時路況系統：提供國道5號全線 0K~54K 走廊即時路況監控、雪山隧道雙向 20 微元空間積分流速推估、內外側車道即時效率比對、最佳通行車道推薦與走廊延遲預測。"
     />
 
-    <!-- Structured Data (JSON-LD) for Search Engines -->
+    <!-- Structured Data (JSON-LD) (已修正為正式網址) -->
     <script type="application/ld+json">
       {
         "@context": "https://schema.org",
         "@type": "WebApplication",
         "name": "餅乾 - 國道5號雪山隧道即時車流分析與CCTV監控系統",
-        "alternateName": "餅乾・雪隧即時交通監控系統",
-        "url": "https://ais-dev-4xhhg4gd3zxr27xuz7rn2s-518595044976.asia-east1.run.app/",
+        "alternateName": ["餅乾雪隧", "餅乾雪山隧道", "餅乾・雪隧即時交通監控系統"],
+        "url": "https://jerry-sepia.vercel.app/",
         "applicationCategory": "TravelApplication",
         "operatingSystem": "All",
         "description": "餅乾雪山隧道即時路況系統：提供國道5號全線 0K~54K 走廊即時路況監控、雪山隧道雙向 20 微元空間積分流速推估、即時 CCTV、內外車道推薦與走廊延遲預測。",
@@ -52,18 +56,18 @@
           "@type": "Offer",
           "price": "0",
           "priceCurrency": "TWD"
-        },
-        "potentialAction": {
-          "@type": "SearchAction",
-          "target": "https://ais-dev-4xhhg4gd3zxr27xuz7rn2s-518595044976.asia-east1.run.app/?q={search_term_string}",
-          "query-input": "required name=search_term_string"
         }
       }
     </script>
   </head>
   <body class="bg-slate-50 text-slate-900 antialiased selection:bg-emerald-500 selection:text-white">
+    <!-- 靜態 SEO 保底標籤 -->
+    <noscript>
+      <h1>餅乾 - 國道5號雪山隧道即時車流分析與CCTV監控系統</h1>
+      <p>提供國道5號全線 0K~54K 走廊即時路況監控、雪山隧道雙向 20 微元空間積分流速推估、即時 CCTV 監控、內外側車道即時效率比對、最佳通行車道推薦與走廊延遲預測。</p>
+    </noscript>
+
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
-
