@@ -64,12 +64,12 @@ const computeRemainingCooldown = (): number => {
 const computeElapsedSeconds = (): number => {
   try {
     const lastFetchStr = localStorage.getItem(STORAGE_LAST_FETCH_TIME_KEY);
-    if (!lastFetchStr) return 999999;
+    if (!lastFetchStr) return 0;
     const lastFetchTime = parseInt(lastFetchStr, 10);
-    if (isNaN(lastFetchTime)) return 999999;
+    if (isNaN(lastFetchTime)) return 0;
     return Math.floor((Date.now() - lastFetchTime) / 1000);
   } catch {
-    return 999999;
+    return 0;
   }
 };
 
@@ -118,8 +118,10 @@ export default function App() {
   const [cooldown, setCooldown] = useState<number>(() => computeRemainingCooldown());
   const [elapsedSinceLastFetch, setElapsedSinceLastFetch] = useState<number>(() => computeElapsedSeconds());
   
-  // 判斷是否已超過 2 分鐘 (120 秒) 未更新即時數據 (若超過 40 分鐘則直接退回首頁未啟動狀態)
+  // 判斷是否已超過 2 分鐘 (120 秒) 未更新即時數據 (僅在已獲取過資料且超過 2 分鐘時提示)
+  const hasFetchedHistory = Boolean(localStorage.getItem(STORAGE_LAST_FETCH_TIME_KEY));
   const isStaleOverTwoMinutes =
+    hasFetchedHistory &&
     (hasStartedAnalysis || estimatorOutput !== null) &&
     elapsedSinceLastFetch >= STALE_DATA_TIMEOUT_SECONDS &&
     elapsedSinceLastFetch < FORTY_MINUTES_TIMEOUT_SECONDS;
@@ -129,14 +131,14 @@ export default function App() {
     recordVisitorSession();
     try {
       const elapsed = computeElapsedSeconds();
-      // 若距前次獲取數據已超過 40 分鐘，強制清空快取並返回首頁未開始分析狀態
-      if (elapsed >= FORTY_MINUTES_TIMEOUT_SECONDS) {
+      const hasLastFetch = Boolean(localStorage.getItem(STORAGE_LAST_FETCH_TIME_KEY));
+      // 若距前次獲取數據已超過 40 分鐘，清空快取
+      if (hasLastFetch && elapsed >= FORTY_MINUTES_TIMEOUT_SECONDS) {
         localStorage.removeItem(STORAGE_HAS_STARTED_KEY);
         localStorage.removeItem(STORAGE_LAST_OUTPUT_KEY);
         setHasStartedAnalysis(false);
         setAnalysisProgress(0);
         setEstimatorOutput(null);
-        setActiveTab("lane");
         return;
       }
 
@@ -155,7 +157,7 @@ export default function App() {
     }
   }, []);
 
-  // Hardware clock synchronized loop (cooldown & 2-minute / 40-minute timeout tracking)
+  // Hardware clock synchronized loop (cooldown & timer tracking)
   useEffect(() => {
     const updateTick = () => {
       const remaining = computeRemainingCooldown();
@@ -163,9 +165,9 @@ export default function App() {
       const elapsed = computeElapsedSeconds();
       setElapsedSinceLastFetch(elapsed);
 
-      // 若間隔超過 40 分鐘，強制退回首頁並重置
-      if (elapsed >= FORTY_MINUTES_TIMEOUT_SECONDS) {
-        setActiveTab("lane");
+      // 若快取超過 40 分鐘，自動重置分析快取（絕不強制切換使用者的頁面分頁）
+      const hasLastFetch = Boolean(localStorage.getItem(STORAGE_LAST_FETCH_TIME_KEY));
+      if (hasLastFetch && elapsed >= FORTY_MINUTES_TIMEOUT_SECONDS) {
         if (hasStartedAnalysis || estimatorOutput !== null) {
           setHasStartedAnalysis(false);
           setAnalysisProgress(0);
@@ -386,22 +388,21 @@ export default function App() {
     }
   };
 
-  // 切換乘車方式 (並依使用者需求自動跳轉至首頁)
+  // 切換乘車方式
   const handleSelectVehicleMode = (mode: VehicleTransitMode) => {
     setSelectedVehicleMode(mode);
     try {
       localStorage.setItem(STORAGE_VEHICLE_MODE_KEY, mode);
     } catch {}
-    setActiveTab("lane"); // 跳回首頁
     const modeMap: Record<VehicleTransitMode, string> = {
       car: "🚗 自駕小客車",
       bus: "🚌 國道大客車／公路客運",
       taxi: "🚕 計程車／多元運具",
     };
-    showToast(`已切換乘車方式為【${modeMap[mode]}】，已為您跳轉至首頁！`, "emerald");
+    showToast(`已切換乘車方式為【${modeMap[mode]}】`, "emerald");
   };
 
-  // 選取特定路線 (並依使用者需求自動跳轉至首頁)
+  // 選取特定路線
   const handleSelectRoute = (originKm: number, destKm: number, label?: string) => {
     const isSouth = destKm >= originKm;
     const newDir: Direction = isSouth ? "S" : "N";
@@ -410,8 +411,7 @@ export default function App() {
     }
     const routeLabel = label || `${originKm.toFixed(1)}K ↔ ${destKm.toFixed(1)}K`;
     setSelectedRoute({ originKm, destKm, label: routeLabel });
-    setActiveTab("lane"); // 跳回首頁
-    showToast(`已選擇路線【${routeLabel}】，已為您跳轉至即時車道指引首頁！`, "emerald");
+    showToast(`已選擇路線【${routeLabel}】`, "emerald");
   };
 
   return (

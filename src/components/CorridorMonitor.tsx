@@ -301,7 +301,7 @@ export default function CorridorMonitor({
                   ? "bg-slate-900 border-slate-800 text-white shadow-md ring-1 ring-emerald-500/30 hover:border-emerald-500"
                   : "bg-slate-50 border-slate-200 text-slate-800 hover:bg-emerald-50/50 hover:border-emerald-200"
               }`}
-              title="點擊選擇此路段並跳至即時車道首頁"
+              title="點擊選取此路段"
             >
               <div>
                 <div className="flex items-center justify-between gap-2">
@@ -337,7 +337,7 @@ export default function CorridorMonitor({
                   <h4 className="text-sm font-extrabold tracking-tight">
                     {seg.name}
                   </h4>
-                  <span className="text-[10px] text-emerald-600 font-bold">點選跳至首頁 ➔</span>
+                  <span className="text-[10px] text-emerald-600 font-bold">選取路段</span>
                 </div>
               </div>
 
