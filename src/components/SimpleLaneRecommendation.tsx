@@ -175,6 +175,7 @@ export default function SimpleLaneRecommendation({
             laneColor="#4f46e5"
             isRecommended={isLane1Recommended || isBothEqual}
             laneArrowColor={lane1ArrowColor}
+            isClosed={lane1.isClosed || lane1EqSpeed === 0}
           />
 
           {/* 行駛時間與細部指標 */}
@@ -182,13 +183,21 @@ export default function SimpleLaneRecommendation({
             <div>
               <span className="text-[10px] text-slate-500 block font-medium">預估通過耗時</span>
               <div className="text-lg font-black font-mono text-emerald-700 mt-0.5">
-                {lane1.travelTimeFormatted}
+                {lane1.isClosed || lane1EqSpeed === 0 ? (
+                  <span className="text-rose-600 font-bold text-sm">⛔ 車道封閉管制</span>
+                ) : (
+                  lane1.travelTimeFormatted
+                )}
               </div>
             </div>
             <div className="text-right">
               <span className="text-[10px] text-slate-400 block font-mono">均速</span>
               <span className="text-xs font-bold font-mono text-slate-800">
-                {lane1EqSpeed.toFixed(1)} km/h
+                {lane1.isClosed || lane1EqSpeed === 0 ? (
+                  <span className="text-rose-600">⛔ 0.0 km/h</span>
+                ) : (
+                  `${lane1EqSpeed.toFixed(1)} km/h`
+                )}
               </span>
             </div>
           </div>
@@ -216,6 +225,7 @@ export default function SimpleLaneRecommendation({
             laneColor="#d97706"
             isRecommended={isLane2Recommended || isBothEqual}
             laneArrowColor={lane2ArrowColor}
+            isClosed={lane2.isClosed || lane2EqSpeed === 0}
           />
 
           {/* 行駛時間與細部指標 */}
@@ -223,13 +233,21 @@ export default function SimpleLaneRecommendation({
             <div>
               <span className="text-[10px] text-slate-500 block font-medium">預估通過耗時</span>
               <div className="text-lg font-black font-mono text-emerald-700 mt-0.5">
-                {lane2.travelTimeFormatted}
+                {lane2.isClosed || lane2EqSpeed === 0 ? (
+                  <span className="text-rose-600 font-bold text-sm">⛔ 車道封閉管制</span>
+                ) : (
+                  lane2.travelTimeFormatted
+                )}
               </div>
             </div>
             <div className="text-right">
               <span className="text-[10px] text-slate-400 block font-mono">均速</span>
               <span className="text-xs font-bold font-mono text-slate-800">
-                {lane2EqSpeed.toFixed(1)} km/h
+                {lane2.isClosed || lane2EqSpeed === 0 ? (
+                  <span className="text-rose-600">⛔ 0.0 km/h</span>
+                ) : (
+                  `${lane2EqSpeed.toFixed(1)} km/h`
+                )}
               </span>
             </div>
           </div>

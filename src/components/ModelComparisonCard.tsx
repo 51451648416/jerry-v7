@@ -35,7 +35,7 @@ export default function ModelComparisonCard({ estimatorOutput }: ModelComparison
               全線等效旅行速度
             </div>
             <div className="text-base font-extrabold text-emerald-400">
-              {estState.equivalentTravelSpeedKmh.toFixed(2)} km/h
+              {estState.equivalentTravelSpeedKmh === 0 ? "⛔ 封閉管制 (0.00 km/h)" : `${estState.equivalentTravelSpeedKmh.toFixed(2)} km/h`}
             </div>
           </div>
         </div>
@@ -46,7 +46,11 @@ export default function ModelComparisonCard({ estimatorOutput }: ModelComparison
         <div className="p-4 rounded-xl border bg-slate-950 border-slate-800">
           <div className="text-xs text-slate-400 mb-1 font-semibold">1. 偵測點算術平均 (Spot Mean)</div>
           <div className="text-2xl font-extrabold text-slate-200 font-mono">
-            {estState.detectorArithmeticMeanSpeedKmh.toFixed(2)} <span className="text-xs font-normal text-slate-500">km/h</span>
+            {estState.detectorArithmeticMeanSpeedKmh === 0 ? (
+              <span className="text-rose-400 text-lg flex items-center gap-1">⛔ 封閉管制</span>
+            ) : (
+              <>{estState.detectorArithmeticMeanSpeedKmh.toFixed(2)} <span className="text-xs font-normal text-slate-500">km/h</span></>
+            )}
           </div>
           <p className="text-[10px] text-slate-500 mt-1">全線 VD 站點即時點速度算術平均</p>
         </div>
@@ -54,7 +58,11 @@ export default function ModelComparisonCard({ estimatorOutput }: ModelComparison
         <div className="p-4 rounded-xl border bg-slate-950 border-slate-800">
           <div className="text-xs text-slate-400 mb-1 font-semibold">2. 空間調和平均 (Space Mean)</div>
           <div className="text-2xl font-extrabold text-amber-300 font-mono">
-            {estState.spaceMeanSpeedKmh.toFixed(2)} <span className="text-xs font-normal text-slate-500">km/h</span>
+            {estState.spaceMeanSpeedKmh === 0 ? (
+              <span className="text-rose-400 text-lg flex items-center gap-1">⛔ 封閉管制</span>
+            ) : (
+              <>{estState.spaceMeanSpeedKmh.toFixed(2)} <span className="text-xs font-normal text-slate-500">km/h</span></>
+            )}
           </div>
           <p className="text-[10px] text-slate-500 mt-1">空間調和平均流速 (SMS)</p>
         </div>
@@ -62,7 +70,11 @@ export default function ModelComparisonCard({ estimatorOutput }: ModelComparison
         <div className="p-4 rounded-xl border bg-slate-950 border-slate-800">
           <div className="text-xs text-slate-400 mb-1 font-semibold">3. 等效旅行速度 (Equivalent)</div>
           <div className="text-2xl font-extrabold text-emerald-400 font-mono">
-            {estState.equivalentTravelSpeedKmh.toFixed(2)} <span className="text-xs font-normal text-slate-500">km/h</span>
+            {estState.equivalentTravelSpeedKmh === 0 ? (
+              <span className="text-rose-400 text-lg flex items-center gap-1">⛔ 封閉管制</span>
+            ) : (
+              <>{estState.equivalentTravelSpeedKmh.toFixed(2)} <span className="text-xs font-normal text-slate-500">km/h</span></>
+            )}
           </div>
           <p className="text-[10px] text-slate-500 mt-1">公式：v_eq = L / (T / 3600)</p>
         </div>
@@ -108,9 +120,23 @@ export default function ModelComparisonCard({ estimatorOutput }: ModelComparison
                   <td className="py-2 text-slate-300">{seg.startMileageKm.toFixed(3)}K</td>
                   <td className="py-2 text-slate-300">{seg.endMileageKm.toFixed(3)}K</td>
                   <td className="py-2 text-slate-300">{seg.lengthKm.toFixed(4)} km</td>
-                  <td className="py-2 text-emerald-400 font-bold">{seg.estimatedSegmentSpeedKmh.toFixed(2)} km/h</td>
-                  <td className="py-2 text-sky-400 font-bold">{seg.segmentTravelTimeSec.toFixed(1)} 秒</td>
-                  <td className="py-2 text-right text-slate-300">{Math.round(seg.cumulativeArrivalSec)} 秒</td>
+                  <td className="py-2 font-bold font-mono">
+                    {seg.estimatedSegmentSpeedKmh === 0 ? (
+                      <span className="text-rose-400">⛔ 封閉 (0.00 km/h)</span>
+                    ) : (
+                      <span className="text-emerald-400">{seg.estimatedSegmentSpeedKmh.toFixed(2)} km/h</span>
+                    )}
+                  </td>
+                  <td className="py-2 font-bold font-mono">
+                    {seg.segmentTravelTimeSec === 0 ? (
+                      <span className="text-rose-400">⛔ 封閉</span>
+                    ) : (
+                      <span className="text-sky-400">{seg.segmentTravelTimeSec.toFixed(1)} 秒</span>
+                    )}
+                  </td>
+                  <td className="py-2 text-right text-slate-300">
+                    {seg.estimatedSegmentSpeedKmh === 0 ? "⛔ 封閉" : `${Math.round(seg.cumulativeArrivalSec)} 秒`}
+                  </td>
                 </tr>
               ))}
             </tbody>

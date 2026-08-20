@@ -231,24 +231,34 @@ export default function ApiDirectTelemetryTable({
                 <tbody className="divide-y divide-slate-100 bg-white">
                   {filteredVd.map((vd) => {
                     const isExtremeSpot = vd.speedDeltaKmh > 23.0;
+                    const isLane1Zero = vd.lane1SpeedKmh === 0;
+                    const isLane2Zero = vd.lane2SpeedKmh === 0;
                     return (
                       <tr
                         key={vd.detectorId}
                         className={`hover:bg-slate-50 transition ${
-                          isExtremeSpot ? "bg-rose-50/60 font-semibold" : ""
+                          isExtremeSpot || isLane1Zero || isLane2Zero ? "bg-rose-50/60 font-semibold" : ""
                         }`}
                       >
                         <td className="py-2 px-3 text-slate-900 font-bold">{vd.detectorId}</td>
                         <td className="py-2 px-3 text-slate-600">{vd.mileageKm.toFixed(3)} K</td>
                         <td className="py-2 px-3 text-indigo-700 font-bold">
-                          {vd.lane1SpeedKmh.toFixed(1)} km/h
+                          {isLane1Zero ? (
+                            <span className="text-rose-600">⛔ 封閉 (0.0 km/h)</span>
+                          ) : (
+                            `${vd.lane1SpeedKmh.toFixed(1)} km/h`
+                          )}
                         </td>
                         <td className="py-2 px-3 text-amber-700 font-bold">
-                          {vd.lane2SpeedKmh.toFixed(1)} km/h
+                          {isLane2Zero ? (
+                            <span className="text-rose-600">⛔ 封閉 (0.0 km/h)</span>
+                          ) : (
+                            `${vd.lane2SpeedKmh.toFixed(1)} km/h`
+                          )}
                         </td>
                         <td
                           className={`py-2 px-3 font-bold ${
-                            isExtremeSpot
+                            isExtremeSpot || isLane1Zero !== isLane2Zero
                               ? "text-rose-600 bg-rose-100/80 px-2 py-0.5 rounded-sm"
                               : vd.speedDeltaKmh > 10
                               ? "text-amber-600"
@@ -264,7 +274,19 @@ export default function ApiDirectTelemetryTable({
                           {vd.lane1OccupancyPercent.toFixed(1)}% / {vd.lane2OccupancyPercent.toFixed(1)}%
                         </td>
                         <td className="py-2 px-3 text-center">
-                          {isExtremeSpot ? (
+                          {isLane1Zero && isLane2Zero ? (
+                            <span className="px-2 py-0.5 rounded-full text-[10px] bg-rose-700 text-white font-sans font-bold">
+                              ⛔ 全線封閉
+                            </span>
+                          ) : isLane1Zero ? (
+                            <span className="px-2 py-0.5 rounded-full text-[10px] bg-rose-600 text-white font-sans font-bold">
+                              ⛔ 內側封閉
+                            </span>
+                          ) : isLane2Zero ? (
+                            <span className="px-2 py-0.5 rounded-full text-[10px] bg-rose-600 text-white font-sans font-bold">
+                              ⛔ 外側封閉
+                            </span>
+                          ) : isExtremeSpot ? (
                             <span className="px-2 py-0.5 rounded-full text-[10px] bg-rose-600 text-white font-sans font-bold">
                               極端分流
                             </span>

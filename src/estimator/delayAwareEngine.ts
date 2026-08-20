@@ -195,6 +195,41 @@ export function estimateDelayAwareNonlinearTrajectory(
   const delayAwareDetails: DelayAwareSegmentResult[] = [];
   const startBaseKm = direction === "S" ? 15.103 : 28.200;
 
+  // 檢測是否整列/整線皆為 0 (如整車道所有偵測器速度皆為 0 則判定為封閉管制，避免誤判為自由流)
+  const isEntireRowZero = detectors.length > 0 && (
+    laneIndex >= 0
+      ? detectors.every((d) => (d.lanes[laneIndex]?.speedKmh ?? 0) === 0)
+      : detectors.every((d) => (d.lanes || []).every((l) => (l.speedKmh ?? 0) === 0))
+  );
+
+  if (isEntireRowZero) {
+    for (let i = 0; i < MODEL_DISCRETIZATION_SLICES; i++) {
+      const startKm = direction === "S" ? startBaseKm + i * SLICE_LENGTH_KM : startBaseKm - i * SLICE_LENGTH_KM;
+      const endKm = direction === "S" ? startBaseKm + (i + 1) * SLICE_LENGTH_KM : startBaseKm - (i + 1) * SLICE_LENGTH_KM;
+      segments.push({
+        segmentIndex: i + 1,
+        startMileageKm: startKm,
+        endMileageKm: endKm,
+        lengthKm: SLICE_LENGTH_KM,
+        upstreamDetectorId: detectors[0]?.detectorId || "VD-0",
+        downstreamDetectorId: detectors[detectors.length - 1]?.detectorId || "VD-N",
+        estimatedSegmentSpeedKmh: 0,
+        segmentTravelTimeSec: 0,
+        cumulativeArrivalSec: 0,
+      });
+    }
+    return {
+      segments,
+      delayAwareDetails: [],
+      totalTravelTimeSec: 0,
+      totalDistanceKm: HSUEHSHAN_TUNNEL_TOTAL_LENGTH_KM,
+      equivalentTravelSpeedKmh: 0,
+      averageState: "FREE_FLOW",
+      overallTauPropagationSec: 0,
+      modelUncertaintyScore: 0,
+    };
+  }
+
   // 1. 建立各 VD 站的多變數狀態向量 X_d = [v, q, o, k]
   const stationStates = detectors.map((d, dIdx) => {
     let speed = 80;
@@ -217,7 +252,7 @@ export function estimateDelayAwareNonlinearTrajectory(
 
     // 自由流防呆保護：12:00 AM ～ 05:30 AM (00:00 ～ 05:30) 低流量/低佔有率下自動校正為 85 km/h
     const isLateNightWindow = isFreeFlowGuardTimeWindow(d.timestamp);
-    const guarded = applyFreeFlowGuard(speed, flowPerHour, occPercent, isLateNightWindow);
+    const guarded = applyFreeFlowGuard(speed, flowPerHour, occPercent, isLateNightWindow, isEntireRowZero);
     const safeSpeed = Math.max(MIN_PHYSICAL_CRAWL_SPEED_KMH, guarded.speed);
     // 嚴格單位轉換：q (veh/h) = k (veh/km) * v (km/h) ⟹ k = q / v
     const densityVehPerKm = safeSpeed > 0 ? flowPerHour / safeSpeed : occPercent * 2.2;

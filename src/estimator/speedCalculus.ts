@@ -54,11 +54,12 @@ export function isFreeFlowGuardTimeWindow(
  * 低流量/佔有率自由流防呆保護 (Free-flow Guard)
  * 解決深夜（00:00～05:30）VD 斷面車流 q ≈ 0 或單一慢速工程車導致調和平均數嚴重失真的問題：
  * 
- * 1. 極端零值與負值過濾：
+ * 1. 若整列（或整線）數據全部為 0（isEntireRowZero === true），則判定為封閉管制 (Closed)，不進行自由流提速，避免誤判。
+ * 2. 極端零值與負值過濾：
  *    - 若原始速度 <= 0：
  *      * occupancy > 15% 視為真實嚴重回堵，給予低速爬行；
  *      * 否則一律視為暢通無車，賦予 85 km/h。
- * 2. 低流量自由流校正：
+ * 3. 低流量自由流校正：
  *    - 當車流量 q < 3 輛/分 (即 flowVehPerHour < 180) 且 佔有率 occupancy < 3% 時：
  *      * 若讀取到的車速 < 60 km/h，強制校正為自由流正常速度 (85 km/h)。
  */
@@ -66,12 +67,22 @@ export function applyFreeFlowGuard(
   rawSpeed: number,
   flowVehPerHour: number,
   occupancyPercent: number,
-  isLateNightWindow: boolean = true
+  isLateNightWindow: boolean = true,
+  isEntireRowZero: boolean = false
 ): {
   speed: number;
   isGuarded: boolean;
   guardReason?: string;
 } {
+  // 若整列/全線數據全為 0，判定為封閉管制 (Closed)，避免將封閉誤判為自由流
+  if (isEntireRowZero) {
+    return {
+      speed: 0,
+      isGuarded: false,
+      guardReason: "整列數據全為 0，判定為車道/全線封閉管制 (Closed)",
+    };
+  }
+
   // 非深夜時段保持原始數值（僅做基本的 <= 0 檢查）
   if (!isLateNightWindow) {
     if (rawSpeed <= 0 || isNaN(rawSpeed)) {

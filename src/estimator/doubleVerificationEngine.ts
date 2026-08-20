@@ -45,6 +45,38 @@ export function computeAlternativeRobustTrajectory(
   const segments: RoadSegmentSlice[] = [];
   const startBaseKm = direction === "S" ? 15.103 : 28.200;
 
+  // 檢測是否整列/整線皆為 0 (如整車道所有偵測器速度皆為 0 則判定為封閉管制)
+  const isEntireRowZero = detectors.length > 0 && (
+    laneIndex >= 0
+      ? detectors.every((d) => (d.lanes[laneIndex]?.speedKmh ?? 0) === 0)
+      : detectors.every((d) => (d.lanes || []).every((l) => (l.speedKmh ?? 0) === 0))
+  );
+
+  if (isEntireRowZero) {
+    for (let i = 0; i < MODEL_DISCRETIZATION_SLICES; i++) {
+      const startKm = direction === "S" ? startBaseKm + i * SLICE_LENGTH_KM : startBaseKm - i * SLICE_LENGTH_KM;
+      const endKm = direction === "S" ? startBaseKm + (i + 1) * SLICE_LENGTH_KM : startBaseKm - (i + 1) * SLICE_LENGTH_KM;
+      segments.push({
+        segmentIndex: i + 1,
+        startMileageKm: startKm,
+        endMileageKm: endKm,
+        lengthKm: SLICE_LENGTH_KM,
+        upstreamDetectorId: detectors[0]?.detectorId || "VD-0",
+        downstreamDetectorId: detectors[detectors.length - 1]?.detectorId || "VD-N",
+        estimatedSegmentSpeedKmh: 0,
+        segmentTravelTimeSec: 0,
+        cumulativeArrivalSec: 0,
+      });
+    }
+    return {
+      segments,
+      totalTravelTimeSec: 0,
+      totalDistanceKm: HSUEHSHAN_TUNNEL_TOTAL_LENGTH_KM,
+      equivalentTravelSpeedKmh: 0,
+      methodName: "ALTERNATIVE_ROBUST_FALLBACK",
+    };
+  }
+
   // 提取各站點有效速度
   const validPoints = detectors
     .map((d) => {

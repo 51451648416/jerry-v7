@@ -8,6 +8,7 @@ interface SpeedometerGaugeProps {
   laneColor: string;
   isRecommended?: boolean;
   laneArrowColor?: "emerald" | "amber" | "rose";
+  isClosed?: boolean;
 }
 
 export default function SpeedometerGauge({
@@ -18,13 +19,17 @@ export default function SpeedometerGauge({
   laneColor,
   isRecommended = false,
   laneArrowColor = "emerald",
+  isClosed = false,
 }: SpeedometerGaugeProps) {
+  const isLaneActuallyClosed = isClosed || speedKmh === 0;
+
   // 限制顯示角度：-135 度 (0 km/h) 到 +135 度 (120 km/h) -> 總夾角 270 度
   const clampedSpeed = Math.max(0, Math.min(speedKmh, maxSpeed));
   const angle = -135 + (clampedSpeed / maxSpeed) * 270;
 
   // 速度區間顏色
   const getSpeedZoneColor = (spd: number) => {
+    if (isLaneActuallyClosed) return "#ef4444"; // 封閉紅色
     if (spd >= 80) return "#10b981"; // 綠色暢通
     if (spd >= 60) return "#f59e0b"; // 琥珀色緩行
     return "#ef4444"; // 紅色壅塞
@@ -49,21 +54,30 @@ export default function SpeedometerGauge({
           </span>
         </div>
 
-        {/* 實體車道指示燈號 (如雪隧頂棚綠色箭頭) */}
+        {/* 實體車道指示燈號 (如雪隧頂棚綠色箭頭或紅色叉號/封閉符號) */}
         <div className="flex items-center gap-1 bg-slate-950 px-2 py-0.5 rounded-full border border-slate-800">
           <span className="text-[10px] text-slate-400 font-mono">車道燈號:</span>
-          <span
-            className={`font-black text-xs inline-flex items-center animate-pulse ${
-              laneArrowColor === "emerald"
-                ? "text-emerald-400"
-                : laneArrowColor === "amber"
-                ? "text-amber-400"
-                : "text-rose-400"
-            }`}
-            title="隧道車道上方指示燈"
-          >
-            ⬇
-          </span>
+          {isLaneActuallyClosed ? (
+            <span
+              className="font-black text-xs inline-flex items-center text-rose-400 gap-0.5 animate-pulse"
+              title="隧道車道封閉管制"
+            >
+              ⛔ 叉號管制
+            </span>
+          ) : (
+            <span
+              className={`font-black text-xs inline-flex items-center animate-pulse ${
+                laneArrowColor === "emerald"
+                  ? "text-emerald-400"
+                  : laneArrowColor === "amber"
+                  ? "text-amber-400"
+                  : "text-rose-400"
+              }`}
+              title="隧道車道上方指示燈"
+            >
+              ⬇
+            </span>
+          )}
         </div>
       </div>
 
@@ -156,10 +170,20 @@ export default function SpeedometerGauge({
 
         {/* 儀表中央數位數值 (Digital HUD Speed Display) */}
         <div className="absolute bottom-1 flex flex-col items-center justify-center">
-          <div className="text-2xl font-black font-mono tracking-tight text-white flex items-baseline gap-0.5">
-            <span>{speedKmh.toFixed(1)}</span>
-            <span className="text-[10px] font-sans text-slate-400 font-bold">km/h</span>
-          </div>
+          {isLaneActuallyClosed ? (
+            <div className="flex flex-col items-center">
+              <div className="text-lg sm:text-xl font-black font-mono tracking-tight text-rose-400 flex items-center gap-1">
+                <span>⛔</span>
+                <span>車道封閉</span>
+              </div>
+              <span className="text-[11px] font-mono text-slate-400 font-bold">0.0 km/h</span>
+            </div>
+          ) : (
+            <div className="text-2xl font-black font-mono tracking-tight text-white flex items-baseline gap-0.5">
+              <span>{speedKmh.toFixed(1)}</span>
+              <span className="text-[10px] font-sans text-slate-400 font-bold">km/h</span>
+            </div>
+          )}
           <span
             className="text-[9px] font-bold px-2 py-0.5 rounded-full mt-0.5"
             style={{
@@ -167,7 +191,13 @@ export default function SpeedometerGauge({
               color: needleColor,
             }}
           >
-            {speedKmh >= 80 ? "暢通運轉" : speedKmh >= 60 ? "穩定行駛" : "路段壅塞"}
+            {isLaneActuallyClosed
+              ? "⛔ 封閉管制"
+              : speedKmh >= 80
+              ? "暢通運轉"
+              : speedKmh >= 60
+              ? "穩定行駛"
+              : "路段壅塞"}
           </span>
         </div>
       </div>

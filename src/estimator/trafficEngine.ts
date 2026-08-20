@@ -126,6 +126,37 @@ function computeDiscretizedTrajectory(
   // 雪隧起訖樁號基準（南向: 15.103K -> 28.200K; 北向: 28.200K -> 15.103K）
   const startBaseKm = direction === "S" ? 15.103 : 28.200;
 
+  // 檢測是否整列/整線皆為 0 (如整車道所有偵測器速度與流量皆為 0 則判定為封閉管制，避免誤判為自由流)
+  const isEntireRowZero = detectors.length > 0 && (
+    laneIndex >= 0
+      ? detectors.every((d) => (d.lanes[laneIndex]?.speedKmh ?? 0) === 0)
+      : detectors.every((d) => (d.lanes || []).every((l) => (l.speedKmh ?? 0) === 0))
+  );
+
+  if (isEntireRowZero) {
+    for (let i = 0; i < MODEL_DISCRETIZATION_SLICES; i++) {
+      const startKm = direction === "S" ? startBaseKm + i * SLICE_LENGTH_KM : startBaseKm - i * SLICE_LENGTH_KM;
+      const endKm = direction === "S" ? startBaseKm + (i + 1) * SLICE_LENGTH_KM : startBaseKm - (i + 1) * SLICE_LENGTH_KM;
+      segments.push({
+        segmentIndex: i + 1,
+        startMileageKm: startKm,
+        endMileageKm: endKm,
+        lengthKm: SLICE_LENGTH_KM,
+        upstreamDetectorId: detectors[0]?.detectorId || "VD-0",
+        downstreamDetectorId: detectors[detectors.length - 1]?.detectorId || "VD-N",
+        estimatedSegmentSpeedKmh: 0,
+        segmentTravelTimeSec: 0,
+        cumulativeArrivalSec: 0,
+      });
+    }
+    return {
+      segments,
+      totalTravelTimeSec: 0,
+      totalDistanceKm: HSUEHSHAN_TUNNEL_TOTAL_LENGTH_KM,
+      equivalentTravelSpeedKmh: 0,
+    };
+  }
+
   // 提取各 VD 觀測站點的代表流速 (包含深夜 00:00~05:30 自由流防呆保護)
   const stationPoints = detectors.map((d) => {
     let speed = 80;
@@ -153,7 +184,7 @@ function computeDiscretizedTrajectory(
 
     // 自由流防呆保護：12:00 AM ～ 05:30 AM (00:00 ～ 05:30) 低流量/低佔有率下自動校正為 85 km/h
     const isLateNightWindow = isFreeFlowGuardTimeWindow(d.timestamp);
-    const guarded = applyFreeFlowGuard(speed, flowPerHour, occPercent, isLateNightWindow);
+    const guarded = applyFreeFlowGuard(speed, flowPerHour, occPercent, isLateNightWindow, isEntireRowZero);
 
     return {
       vdId: d.detectorId,

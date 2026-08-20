@@ -56,6 +56,11 @@ export function estimateCorridorTrafficState(
       // 若是雪山隧道核心段，優先採用微元積分高精度等效速度
       avgSpeed = tunnelEquivalentSpeedKmh > 0 ? tunnelEquivalentSpeedKmh : 80;
     } else if (matchingDetectors.length > 0) {
+      // 檢測該路段所有偵測器是否整列全為 0 (封閉管制)
+      const isSegmentAllZero = matchingDetectors.every((d) =>
+        (d.lanes || []).every((l) => (l.speedKmh ?? 0) === 0)
+      );
+
       // 空間調和平均（流體守恆空間平均速，結合深夜 00:00~05:30 自由流防呆保護）
       const validSpeeds = matchingDetectors
         .map((d) => {
@@ -66,12 +71,12 @@ export function estimateCorridorTrafficState(
           const s1 = l1?.speedKmh ?? 80;
           const f1 = l1?.flowVehPerHour ?? 0;
           const o1 = l1?.occupancyPercent ?? 0;
-          const g1 = applyFreeFlowGuard(s1, f1, o1, isLateNightWindow);
+          const g1 = applyFreeFlowGuard(s1, f1, o1, isLateNightWindow, isSegmentAllZero);
 
           const s2 = l2 ? (l2.speedKmh ?? g1.speed) : g1.speed;
           const f2 = l2 ? (l2.flowVehPerHour ?? 0) : 0;
           const o2 = l2 ? (l2.occupancyPercent ?? 0) : 0;
-          const g2 = l2 ? applyFreeFlowGuard(s2, f2, o2, isLateNightWindow) : g1;
+          const g2 = l2 ? applyFreeFlowGuard(s2, f2, o2, isLateNightWindow, isSegmentAllZero) : g1;
 
           return (g1.speed + g2.speed) / 2;
         })

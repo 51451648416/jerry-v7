@@ -99,7 +99,9 @@ export default function MathTheoryInspector({ estState }: MathTheoryInspectorPro
             </div>
             <div className="flex justify-between text-slate-400">
               <span>等效旅行速度:</span>
-              <span className="text-emerald-400 font-bold">{estState.equivalentTravelSpeedKmh.toFixed(2)} km/h</span>
+              <span className={estState.equivalentTravelSpeedKmh === 0 ? "text-rose-400 font-bold" : "text-emerald-400 font-bold"}>
+                {estState.equivalentTravelSpeedKmh === 0 ? "⛔ 封閉管制 (0.00 km/h)" : `${estState.equivalentTravelSpeedKmh.toFixed(2)} km/h`}
+              </span>
             </div>
           </div>
         </div>

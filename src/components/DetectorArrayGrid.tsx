@@ -95,15 +95,27 @@ export default function DetectorArrayGrid({
                 <div className="space-y-1.5 font-mono text-xs mb-3">
                   <div className="flex items-center justify-between bg-slate-900/90 px-2 py-1 rounded border border-slate-800/80">
                     <span className="text-[10px] text-slate-400">車道 1 (內):</span>
-                    <span className={`font-bold ${getSpeedLevel(l1.speedKmh).colorText}`}>
-                      {l1.speedKmh} <span className="text-[9px] font-normal text-slate-500">km/h</span>
-                    </span>
+                    {l1.speedKmh === 0 ? (
+                      <span className="font-bold text-rose-400 text-[11px]">
+                        ⛔ 封閉 (0 km/h)
+                      </span>
+                    ) : (
+                      <span className={`font-bold ${getSpeedLevel(l1.speedKmh).colorText}`}>
+                        {l1.speedKmh} <span className="text-[9px] font-normal text-slate-500">km/h</span>
+                      </span>
+                    )}
                   </div>
                   <div className="flex items-center justify-between bg-slate-900/90 px-2 py-1 rounded border border-slate-800/80">
                     <span className="text-[10px] text-slate-400">車道 2 (外):</span>
-                    <span className={`font-bold ${getSpeedLevel(l2.speedKmh).colorText}`}>
-                      {l2.speedKmh} <span className="text-[9px] font-normal text-slate-500">km/h</span>
-                    </span>
+                    {l2.speedKmh === 0 ? (
+                      <span className="font-bold text-rose-400 text-[11px]">
+                        ⛔ 封閉 (0 km/h)
+                      </span>
+                    ) : (
+                      <span className={`font-bold ${getSpeedLevel(l2.speedKmh).colorText}`}>
+                        {l2.speedKmh} <span className="text-[9px] font-normal text-slate-500">km/h</span>
+                      </span>
+                    )}
                   </div>
                 </div>
               </div>
