@@ -26,9 +26,9 @@ export default function TwoMinuteStalePrompt({
   onRefresh,
   isLoading,
   cooldown,
-  elapsedSeconds = 120,
+  elapsedSeconds = 132,
 }: TwoMinuteStalePromptProps) {
-  const elapsedMinutes = Math.floor(elapsedSeconds / 60);
+  const elapsedMinutes = (elapsedSeconds / 60).toFixed(1);
   const elapsedRemSecs = elapsedSeconds % 60;
 
   return (
@@ -73,11 +73,11 @@ export default function TwoMinuteStalePrompt({
                 API 資源最佳化
               </span>
               <span className="text-xs text-slate-400 font-mono">
-                逾 {elapsedMinutes} 分 {elapsedRemSecs > 0 ? `${elapsedRemSecs} 秒` : ""}
+                逾 {elapsedMinutes} 分鐘
               </span>
             </div>
             <h2 className="text-lg sm:text-xl font-bold mt-0.5 text-white tracking-tight">
-              數據已超過 2 分鐘未更新，請點擊上方按鈕更新
+              數據已超過 2.2 分鐘未更新，請點擊上方按鈕更新
             </h2>
           </div>
         </div>
@@ -120,7 +120,7 @@ export default function TwoMinuteStalePrompt({
           <Clock className="h-5 w-5 text-amber-400 shrink-0" />
           <div>
             <span className="text-slate-400 text-[10px] block font-sans">超時待命門檻</span>
-            <span className="text-white font-bold">120 秒 (2 分鐘)</span>
+            <span className="text-white font-bold">132 秒 (2.2 分鐘)</span>
           </div>
         </div>
         <div className="bg-slate-950/60 p-3 rounded-2xl border border-slate-800 flex items-center gap-3">

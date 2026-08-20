@@ -32,6 +32,13 @@ import TwoMinuteStalePrompt from "./components/TwoMinuteStalePrompt";
 import { getResolvedApiUrl, getResolvedApiHeaders } from "./services/apiConfig";
 import { fetchDirectFreewayVd } from "./services/tdxDirectClient";
 
+import TrafficRefreshControl, {
+  getRemainingCooldownSec,
+  getNextCooldownDuration,
+  STORAGE_KEY_LOCK_UNTIL,
+  STORAGE_KEY_TIMESTAMPS,
+  BASE_COOLDOWN_SEC,
+} from "./components/TrafficRefreshControl";
 import { Direction, FinalEstimatorOutput, VehicleTransitMode } from "./types";
 import { runVdTrafficEstimator } from "./estimator/trafficEngine";
 import { captureDetectionToDataset } from "./services/datasetRepository";
@@ -39,8 +46,7 @@ import { isAdminAuthenticated, subscribeAdminAuth } from "./services/adminAuth";
 import { recordVisitorSession } from "./services/visitorStats";
 import { recordVisitorTrafficTrajectory } from "./services/recentVisitorTrajectoryRepository";
 
-const API_COOLDOWN_SECONDS = 80;
-const STALE_DATA_TIMEOUT_SECONDS = 120; // 2 分鐘 (120 秒) 未更新即判為過期，需跳轉回更新畫面
+const STALE_DATA_TIMEOUT_SECONDS = 132; // 2.2 分鐘 (132 秒) 未更新即判為過期，需跳轉回更新畫面
 const FORTY_MINUTES_TIMEOUT_SECONDS = 40 * 60; // 40 分鐘 (2400 秒) 判斷：超過 40 分鐘未更新或閒置則完全退回首頁
 const STORAGE_LAST_FETCH_TIME_KEY = "hsuehshan_traffic_last_fetch_timestamp";
 const STORAGE_LAST_OUTPUT_KEY = "hsuehshan_traffic_cached_output";
@@ -48,17 +54,7 @@ const STORAGE_HAS_STARTED_KEY = "hsuehshan_traffic_started_state";
 const STORAGE_VEHICLE_MODE_KEY = "hsuehshan_traffic_vehicle_mode";
 
 const computeRemainingCooldown = (): number => {
-  try {
-    const lastFetchStr = localStorage.getItem(STORAGE_LAST_FETCH_TIME_KEY);
-    if (!lastFetchStr) return 0;
-    const lastFetchTime = parseInt(lastFetchStr, 10);
-    if (isNaN(lastFetchTime)) return 0;
-    const elapsedSeconds = (Date.now() - lastFetchTime) / 1000;
-    const remaining = Math.ceil(API_COOLDOWN_SECONDS - elapsedSeconds);
-    return remaining > 0 ? remaining : 0;
-  } catch {
-    return 0;
-  }
+  return getRemainingCooldownSec();
 };
 
 const computeElapsedSeconds = (): number => {
@@ -267,7 +263,7 @@ export default function App() {
   };
 
   // Fetch Live TDX VD Data and Run Traffic State Estimation
-  // Strictly enforces hardware-persisted 80-second rate limiting per device
+  // Strictly enforces hardware-persisted dynamic cooldown rate limiting per device
   const fetchTdxAndEstimate = async (targetDir: Direction = direction) => {
     const currentRemainingCooldown = computeRemainingCooldown();
     if (currentRemainingCooldown > 0) {
@@ -283,13 +279,19 @@ export default function App() {
     setHasStartedAnalysis(true);
     setAnalysisProgress(100);
 
-    // Persist timestamp immediately to prevent page reload bypass
+    // Calculate dynamic cooldown (90s base, 150s if 3+ requests within 3 minutes)
+    const cooldownSec = getNextCooldownDuration();
     const fetchTimestampMs = Date.now();
+    const lockUntil = fetchTimestampMs + cooldownSec * 1000;
+
+    // Persist timestamp immediately to prevent page reload bypass
     try {
       localStorage.setItem(STORAGE_LAST_FETCH_TIME_KEY, fetchTimestampMs.toString());
+      localStorage.setItem(STORAGE_KEY_LOCK_UNTIL, lockUntil.toString());
       localStorage.setItem(STORAGE_HAS_STARTED_KEY, "true");
     } catch {}
-    setCooldown(API_COOLDOWN_SECONDS);
+    setCooldown(cooldownSec);
+    setElapsedSinceLastFetch(0);
 
     try {
       const targetApiUrl = getResolvedApiUrl("freewayVd");
@@ -507,27 +509,15 @@ export default function App() {
                 </button>
               </div>
 
-              {/* 核心主按鈕：按我分析哪一邊車道比較快 */}
-              <button
-                disabled={isLoading || cooldown > 0}
-                onClick={() => fetchTdxAndEstimate(direction)}
-                className={`w-full sm:flex-1 sm:max-w-md py-3.5 px-6 rounded-2xl font-black text-sm sm:text-base flex items-center justify-center gap-2.5 transition shadow-md cursor-pointer ${
-                  isLoading
-                    ? "bg-slate-100 text-slate-400 border border-slate-200 cursor-not-allowed"
-                    : cooldown > 0
-                    ? "bg-slate-100 text-slate-500 border border-slate-200 cursor-not-allowed font-mono text-xs"
-                    : "bg-emerald-600 hover:bg-emerald-500 text-white shadow-emerald-600/25 active:scale-[0.98]"
-                }`}
-              >
-                <RefreshCw className={`h-4 w-4 ${isLoading ? "animate-spin text-slate-400" : ""}`} />
-                <span>
-                  {isLoading
-                    ? "正在分析哪一邊車道比較快..."
-                    : cooldown > 0
-                    ? `冷卻中 (${cooldown} 秒後可更新)`
-                    : "按我分析哪一邊車道比較快"}
-                </span>
-              </button>
+              {/* 核心主按鈕：TrafficRefreshControl 最佳化頻寬保護（隨機抖動 Jitter + 階梯式動態退避 Dynamic Backoff） */}
+              <div className="w-full sm:flex-1 sm:max-w-md">
+                <TrafficRefreshControl
+                  onFetchData={() => fetchTdxAndEstimate(direction)}
+                  isLoading={isLoading}
+                  cooldown={cooldown}
+                  buttonText="按我分析哪一邊車道比較快"
+                />
+              </div>
             </div>
 
             {/* 若超過 2 分鐘未更新即時數據，跳轉至更新待命畫面 */}
