@@ -18,6 +18,107 @@ import { SpeedAnalysisMetrics } from "../types";
  *   with documented engineering annotation.
  */
 export const MIN_PHYSICAL_CRAWL_SPEED_KMH = 3.6; // 1 m/s crawling creep
+export const FREE_FLOW_DEFAULT_SPEED_KMH = 85.0; // 自由流預設速度 85 km/h
+
+/**
+ * 檢查是否處於平日/深夜極低車流時段 (12:00 AM ～ 05:30 AM / 00:00 ～ 05:30)
+ */
+export function isFreeFlowGuardTimeWindow(
+  timestamp?: string | Date,
+  currentDate: Date = new Date()
+): boolean {
+  let targetDate = currentDate;
+  if (timestamp) {
+    if (timestamp instanceof Date) {
+      targetDate = timestamp;
+    } else {
+      const parsed = new Date(timestamp);
+      if (!isNaN(parsed.getTime())) {
+        targetDate = parsed;
+      } else {
+        const match = String(timestamp).match(/(?:T|\s|^)(\d{1,2}):(\d{2})/);
+        if (match) {
+          const h = parseInt(match[1], 10);
+          const m = parseInt(match[2], 10);
+          return (h >= 0 && h < 5) || (h === 5 && m <= 30);
+        }
+      }
+    }
+  }
+  const h = targetDate.getHours();
+  const m = targetDate.getMinutes();
+  return (h >= 0 && h < 5) || (h === 5 && m <= 30);
+}
+
+/**
+ * 低流量/佔有率自由流防呆保護 (Free-flow Guard)
+ * 解決深夜（00:00～05:30）VD 斷面車流 q ≈ 0 或單一慢速工程車導致調和平均數嚴重失真的問題：
+ * 
+ * 1. 極端零值與負值過濾：
+ *    - 若原始速度 <= 0：
+ *      * occupancy > 15% 視為真實嚴重回堵，給予低速爬行；
+ *      * 否則一律視為暢通無車，賦予 85 km/h。
+ * 2. 低流量自由流校正：
+ *    - 當車流量 q < 3 輛/分 (即 flowVehPerHour < 180) 且 佔有率 occupancy < 3% 時：
+ *      * 若讀取到的車速 < 60 km/h，強制校正為自由流正常速度 (85 km/h)。
+ */
+export function applyFreeFlowGuard(
+  rawSpeed: number,
+  flowVehPerHour: number,
+  occupancyPercent: number,
+  isLateNightWindow: boolean = true
+): {
+  speed: number;
+  isGuarded: boolean;
+  guardReason?: string;
+} {
+  // 非深夜時段保持原始數值（僅做基本的 <= 0 檢查）
+  if (!isLateNightWindow) {
+    if (rawSpeed <= 0 || isNaN(rawSpeed)) {
+      if (occupancyPercent > 15) {
+        return { speed: MIN_PHYSICAL_CRAWL_SPEED_KMH, isGuarded: false };
+      }
+      return { speed: FREE_FLOW_DEFAULT_SPEED_KMH, isGuarded: true, guardReason: "非深夜零值回退" };
+    }
+    return { speed: rawSpeed, isGuarded: false };
+  }
+
+  const flowVehPerMin = flowVehPerHour / 60.0;
+  const occ = Math.max(0, occupancyPercent);
+
+  // 1. 極端零值與負值過濾 (若原始速度 <= 0)
+  if (rawSpeed <= 0 || isNaN(rawSpeed)) {
+    if (occ > 15.0) {
+      // 佔有率 > 15% 視為嚴重回堵給予低速
+      return {
+        speed: MIN_PHYSICAL_CRAWL_SPEED_KMH,
+        isGuarded: true,
+        guardReason: "極端零值且佔有率>15%，判定為嚴重回堵",
+      };
+    } else {
+      // 否則一律視為暢通並賦予 85 km/h
+      return {
+        speed: FREE_FLOW_DEFAULT_SPEED_KMH,
+        isGuarded: true,
+        guardReason: `極端零值且佔有率低(${occ.toFixed(1)}%)，校正為自由流 ${FREE_FLOW_DEFAULT_SPEED_KMH} km/h`,
+      };
+    }
+  }
+
+  // 2. 低流量自由流校正：當車流量 q < 3 輛/分 且 佔有率 occupancy < 3% 時，若車速 < 60 km/h，強制校正為 85 km/h
+  if (flowVehPerMin < 3.0 && occ < 3.0 && rawSpeed < 60.0) {
+    return {
+      speed: FREE_FLOW_DEFAULT_SPEED_KMH,
+      isGuarded: true,
+      guardReason: `深夜低流量(q=${flowVehPerMin.toFixed(1)}輛/分, occ=${occ.toFixed(1)}%)異常低速(${rawSpeed.toFixed(1)}km/h)，強制校正為自由流 ${FREE_FLOW_DEFAULT_SPEED_KMH} km/h`,
+    };
+  }
+
+  return {
+    speed: rawSpeed,
+    isGuarded: false,
+  };
+}
 
 export function computeSpeedAnalysis(
   speedsKmh: number[],

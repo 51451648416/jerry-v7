@@ -10,6 +10,7 @@ import {
   ValidationModelMetric,
   SpeedRegimeBenchmarkMetric,
 } from "../types";
+import { applyFreeFlowGuard, isFreeFlowGuardTimeWindow } from "./speedCalculus";
 
 export const HSUEHSHAN_TUNNEL_TOTAL_LENGTH_KM = 13.097; // 雪山隧道全長 13.097 km
 export const MODEL_DISCRETIZATION_SLICES = 20; // 20 個空間微元切片
@@ -214,7 +215,10 @@ export function estimateDelayAwareNonlinearTrajectory(
       }
     }
 
-    const safeSpeed = Math.max(MIN_PHYSICAL_CRAWL_SPEED_KMH, speed);
+    // 自由流防呆保護：12:00 AM ～ 05:30 AM (00:00 ～ 05:30) 低流量/低佔有率下自動校正為 85 km/h
+    const isLateNightWindow = isFreeFlowGuardTimeWindow(d.timestamp);
+    const guarded = applyFreeFlowGuard(speed, flowPerHour, occPercent, isLateNightWindow);
+    const safeSpeed = Math.max(MIN_PHYSICAL_CRAWL_SPEED_KMH, guarded.speed);
     // 嚴格單位轉換：q (veh/h) = k (veh/km) * v (km/h) ⟹ k = q / v
     const densityVehPerKm = safeSpeed > 0 ? flowPerHour / safeSpeed : occPercent * 2.2;
 

@@ -14,6 +14,7 @@ import {
   BaseCorridorSegmentConfig,
 } from "../data/corridorConfig";
 import { formatSecondsToMinSec, MIN_PHYSICAL_CRAWL_SPEED_KMH } from "./trafficEngine";
+import { applyFreeFlowGuard, isFreeFlowGuardTimeWindow } from "./speedCalculus";
 import { getStoredDataset } from "../services/datasetRepository";
 import { getLearnedParameters, getTrainingEpochHistory } from "./modelTrainingEngine";
 import {
@@ -55,12 +56,24 @@ export function estimateCorridorTrafficState(
       // 若是雪山隧道核心段，優先採用微元積分高精度等效速度
       avgSpeed = tunnelEquivalentSpeedKmh > 0 ? tunnelEquivalentSpeedKmh : 80;
     } else if (matchingDetectors.length > 0) {
-      // 空間調和平均（流體守恆空間平均速）
+      // 空間調和平均（流體守恆空間平均速，結合深夜 00:00~05:30 自由流防呆保護）
       const validSpeeds = matchingDetectors
         .map((d) => {
-          const l1 = d.lanes[0]?.speedKmh || 80;
-          const l2 = d.lanes[1]?.speedKmh || l1;
-          return (l1 + l2) / 2;
+          const l1 = d.lanes[0];
+          const l2 = d.lanes[1];
+          const isLateNightWindow = isFreeFlowGuardTimeWindow(d.timestamp);
+
+          const s1 = l1?.speedKmh ?? 80;
+          const f1 = l1?.flowVehPerHour ?? 0;
+          const o1 = l1?.occupancyPercent ?? 0;
+          const g1 = applyFreeFlowGuard(s1, f1, o1, isLateNightWindow);
+
+          const s2 = l2 ? (l2.speedKmh ?? g1.speed) : g1.speed;
+          const f2 = l2 ? (l2.flowVehPerHour ?? 0) : 0;
+          const o2 = l2 ? (l2.occupancyPercent ?? 0) : 0;
+          const g2 = l2 ? applyFreeFlowGuard(s2, f2, o2, isLateNightWindow) : g1;
+
+          return (g1.speed + g2.speed) / 2;
         })
         .filter((s) => s > 0);
 

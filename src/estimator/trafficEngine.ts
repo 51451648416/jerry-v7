@@ -33,7 +33,17 @@ export const HSUEHSHAN_TUNNEL_TOTAL_LENGTH_KM = 13.097; // 嚴格定義：雪山
 export const MODEL_DISCRETIZATION_SLICES = 20; // 嚴格定義：20 個空間微元切片
 export const SLICE_LENGTH_KM = HSUEHSHAN_TUNNEL_TOTAL_LENGTH_KM / MODEL_DISCRETIZATION_SLICES; // 0.65485 km
 
-export const MIN_PHYSICAL_CRAWL_SPEED_KMH = 3.6; // 1 m/s 爬行速度下限，防止除以零與數值發散
+export {
+  MIN_PHYSICAL_CRAWL_SPEED_KMH,
+  FREE_FLOW_DEFAULT_SPEED_KMH,
+  applyFreeFlowGuard,
+  isFreeFlowGuardTimeWindow,
+} from "./speedCalculus";
+import {
+  MIN_PHYSICAL_CRAWL_SPEED_KMH,
+  applyFreeFlowGuard,
+  isFreeFlowGuardTimeWindow,
+} from "./speedCalculus";
 
 /**
  * 判定是否為深夜時段 (02:00 ~ 04:00)
@@ -116,19 +126,39 @@ function computeDiscretizedTrajectory(
   // 雪隧起訖樁號基準（南向: 15.103K -> 28.200K; 北向: 28.200K -> 15.103K）
   const startBaseKm = direction === "S" ? 15.103 : 28.200;
 
-  // 提取各 VD 觀測站點的代表流速
+  // 提取各 VD 觀測站點的代表流速 (包含深夜 00:00~05:30 自由流防呆保護)
   const stationPoints = detectors.map((d) => {
     let speed = 80;
+    let flowPerHour = 1000;
+    let occPercent = 10;
+
     if (laneIndex >= 0) {
-      speed = d.lanes[laneIndex]?.speedKmh || d.lanes[0]?.speedKmh || 80;
+      const lane = d.lanes[laneIndex] || d.lanes[0];
+      speed = lane?.speedKmh || 80;
+      flowPerHour = lane?.flowVehPerHour || 0;
+      occPercent = lane?.occupancyPercent || 0;
     } else {
-      const sumSpeed = d.lanes.reduce((acc, l) => acc + l.speedKmh, 0);
-      speed = d.lanes.length > 0 ? sumSpeed / d.lanes.length : 80;
+      const validLanes = d.lanes.filter((l) => l.speedKmh > 0);
+      if (validLanes.length > 0) {
+        speed = validLanes.reduce((acc, l) => acc + l.speedKmh, 0) / validLanes.length;
+        flowPerHour = validLanes.reduce((acc, l) => acc + l.flowVehPerHour, 0);
+        occPercent = validLanes.reduce((acc, l) => acc + l.occupancyPercent, 0) / validLanes.length;
+      } else {
+        const sumSpeed = d.lanes.reduce((acc, l) => acc + l.speedKmh, 0);
+        speed = d.lanes.length > 0 ? sumSpeed / d.lanes.length : 80;
+        flowPerHour = d.lanes.reduce((acc, l) => acc + l.flowVehPerHour, 0);
+        occPercent = d.lanes.length > 0 ? d.lanes.reduce((acc, l) => acc + l.occupancyPercent, 0) / d.lanes.length : 0;
+      }
     }
+
+    // 自由流防呆保護：12:00 AM ～ 05:30 AM (00:00 ～ 05:30) 低流量/低佔有率下自動校正為 85 km/h
+    const isLateNightWindow = isFreeFlowGuardTimeWindow(d.timestamp);
+    const guarded = applyFreeFlowGuard(speed, flowPerHour, occPercent, isLateNightWindow);
+
     return {
       vdId: d.detectorId,
       mileageKm: d.mileageKm,
-      speed: Math.max(MIN_PHYSICAL_CRAWL_SPEED_KMH, speed),
+      speed: Math.max(MIN_PHYSICAL_CRAWL_SPEED_KMH, guarded.speed),
     };
   });
 
