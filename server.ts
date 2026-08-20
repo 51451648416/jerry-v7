@@ -25,6 +25,20 @@ async function startServer() {
     }
   });
 
+  // Sync custom keys to server TDX Key Rotation Manager
+  app.post("/api/tdx/keys/sync", (req, res) => {
+    try {
+      const { keys } = req.body;
+      if (Array.isArray(keys)) {
+        globalTdxKeyManager.setCustomKeys(keys);
+        return res.json({ success: true, count: keys.length, status: globalTdxKeyManager.getStatus() });
+      }
+      return res.status(400).json({ error: "Invalid keys array payload" });
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
   // Unified endpoint for Freeway VD data with Automatic Key Rotation & Failover
   const handleFreewayVd = async (req: express.Request, res: express.Response) => {
     try {

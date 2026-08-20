@@ -37,6 +37,14 @@ import {
   Clock,
   Square,
   Zap,
+  ArrowUp,
+  ArrowDown,
+  Eye,
+  EyeOff,
+  Copy,
+  FileText,
+  Check,
+  RefreshCw,
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import {
@@ -75,7 +83,15 @@ import {
   DEFAULT_API_CONFIG,
   getResolvedApiUrl,
 } from "../services/apiConfig";
-import { globalTdxKeyManager } from "../services/tdxKeyRotator";
+import {
+  globalTdxKeyManager,
+  getStoredTdxKeyPairs,
+  saveStoredTdxKeyPairs,
+  testSingleTdxKey,
+  CustomTdxKeyInput,
+  TdxKeyManagerStatus,
+  STORAGE_KEY_TDX_API_KEYS,
+} from "../services/tdxKeyRotator";
 import {
   getVisitorStats,
   increaseVisitorCount,
@@ -104,12 +120,31 @@ export default function AdminAdvancedSettingsModal({
   const [visitorStats, setVisitorStats] = useState<VisitorStatsData>(getVisitorStats());
   const [customIncrement, setCustomIncrement] = useState<string>("100");
   const [customTotal, setCustomTotal] = useState<string>("");
-  const [tdxClientId, setTdxClientId] = useState(
-    localStorage.getItem("TDX_CLIENT_ID") || ""
-  );
-  const [tdxClientSecret, setTdxClientSecret] = useState(
-    localStorage.getItem("TDX_CLIENT_SECRET") || ""
-  );
+  
+  // 多組 TDX 金鑰輪轉配置 (支援無限組、依序遞補使用)
+  const [keyPairs, setKeyPairs] = useState<CustomTdxKeyInput[]>(() => {
+    const stored = getStoredTdxKeyPairs();
+    if (stored.length > 0) return stored;
+    return [
+      {
+        id: `key-${Date.now()}`,
+        clientId: "",
+        clientSecret: "",
+        label: "第 1 順位主要金鑰",
+        isEnabled: true,
+      },
+    ];
+  });
+  const [showKeySecrets, setShowKeySecrets] = useState<Record<string, boolean>>({});
+  const [testingKeyIds, setTestingKeyIds] = useState<Record<string, boolean>>({});
+  const [keyTestResults, setKeyTestResults] = useState<
+    Record<string, { success: boolean; message: string; latencyMs: number; expiresIn?: number }>
+  >({});
+  const [isTestingAllKeys, setIsTestingAllKeys] = useState(false);
+  const [tdxStatus, setTdxStatus] = useState<TdxKeyManagerStatus>(() => globalTdxKeyManager.getStatus());
+  const [isBatchModalOpen, setIsBatchModalOpen] = useState(false);
+  const [batchInputText, setBatchInputText] = useState("");
+
   const [apiConfig, setApiConfig] = useState<ApiEndpointConfig>(getApiConfig());
   const [isTestingApi, setIsTestingApi] = useState(false);
   const [testApiResult, setTestApiResult] = useState<{
@@ -145,8 +180,21 @@ export default function AdminAdvancedSettingsModal({
     setDataset(getStoredDataset());
     setLearnedParams(getLearnedParameters());
     setVisitorStats(getVisitorStats());
-    setTdxClientId(localStorage.getItem("TDX_CLIENT_ID") || "");
-    setTdxClientSecret(localStorage.getItem("TDX_CLIENT_SECRET") || "");
+    const stored = getStoredTdxKeyPairs();
+    setKeyPairs(
+      stored.length > 0
+        ? stored
+        : [
+            {
+              id: `key-${Date.now()}`,
+              clientId: "",
+              clientSecret: "",
+              label: "第 1 順位主要金鑰",
+              isEnabled: true,
+            },
+          ]
+    );
+    setTdxStatus(globalTdxKeyManager.getStatus());
     setApiConfig(getApiConfig());
     setTestApiResult(null);
     setAutoCollectorState(globalAutoTrainingCollector.getState());
@@ -391,39 +439,217 @@ export default function AdminAdvancedSettingsModal({
     }
   };
 
-  // 4. TDX 金鑰儲存與變更 (TDX Key Settings)
-  const handleSaveTdx = () => {
+  // 4. TDX 金鑰輪轉池管理函式 (支援無限組 API Key-Value Pair 依序使用與測試)
+  const handleAddNewKeyPair = () => {
+    const nextNum = keyPairs.length + 1;
+    const newKey: CustomTdxKeyInput = {
+      id: `key-user-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+      clientId: "",
+      clientSecret: "",
+      label: `金鑰組 #${nextNum} (${nextNum === 1 ? "主要使用" : `備援順位 ${nextNum - 1}`})`,
+      isEnabled: true,
+    };
+    setKeyPairs((prev) => [...prev, newKey]);
+  };
+
+  const handleUpdateKeyField = (id: string, field: keyof CustomTdxKeyInput, value: any) => {
+    setKeyPairs((prev) => prev.map((k) => (k.id === id ? { ...k, [field]: value } : k)));
+  };
+
+  const handleDeleteKeyPair = (id: string) => {
+    setKeyPairs((prev) => {
+      const filtered = prev.filter((k) => k.id !== id);
+      return filtered.length > 0
+        ? filtered
+        : [
+            {
+              id: `key-${Date.now()}`,
+              clientId: "",
+              clientSecret: "",
+              label: "第 1 順位主要金鑰",
+              isEnabled: true,
+            },
+          ];
+    });
+  };
+
+  const handleMoveKey = (index: number, direction: "up" | "down") => {
+    setKeyPairs((prev) => {
+      const targetIndex = direction === "up" ? index - 1 : index + 1;
+      if (targetIndex < 0 || targetIndex >= prev.length) return prev;
+      const copy = [...prev];
+      const temp = copy[index];
+      copy[index] = copy[targetIndex];
+      copy[targetIndex] = temp;
+      return copy;
+    });
+  };
+
+  const handleToggleSecretVisibility = (id: string) => {
+    setShowKeySecrets((prev) => ({ ...prev, [id]: !prev[id] }));
+  };
+
+  const handleTestSingleKey = async (id: string, clientId: string, clientSecret: string) => {
+    setTestingKeyIds((prev) => ({ ...prev, [id]: true }));
+    try {
+      const res = await testSingleTdxKey(clientId, clientSecret);
+      setKeyTestResults((prev) => ({ ...prev, [id]: res }));
+      if (res.success) {
+        showNotice(`✓ 金鑰認證成功 (延遲 ${res.latencyMs}ms)！`);
+      } else {
+        showNotice(`金鑰認證失敗：${res.message}`, "error");
+      }
+    } catch (err: any) {
+      setKeyTestResults((prev) => ({
+        ...prev,
+        [id]: { success: false, message: err.message || "連線異常", latencyMs: 0 },
+      }));
+    } finally {
+      setTestingKeyIds((prev) => ({ ...prev, [id]: false }));
+    }
+  };
+
+  const handleTestAllKeys = async () => {
+    setIsTestingAllKeys(true);
+    let successCount = 0;
+    let failCount = 0;
+    for (const pair of keyPairs) {
+      if (!pair.clientId || !pair.clientSecret) continue;
+      setTestingKeyIds((prev) => ({ ...prev, [pair.id]: true }));
+      try {
+        const res = await testSingleTdxKey(pair.clientId, pair.clientSecret);
+        setKeyTestResults((prev) => ({ ...prev, [pair.id]: res }));
+        if (res.success) successCount++;
+        else failCount++;
+      } catch (err: any) {
+        setKeyTestResults((prev) => ({
+          ...prev,
+          [pair.id]: { success: false, message: err.message || "連線異常", latencyMs: 0 },
+        }));
+        failCount++;
+      } finally {
+        setTestingKeyIds((prev) => ({ ...prev, [pair.id]: false }));
+      }
+    }
+    setIsTestingAllKeys(false);
+    showNotice(`測試完畢！有效成功: ${successCount} 組，失敗/異常: ${failCount} 組`);
+  };
+
+  const handleSaveAllKeyPairs = () => {
     executeGuardedAction(
-      "儲存 TDX 官方金鑰憑證",
-      "此動作將寫入自訂的 TDX Client ID 與 Client Secret。",
+      "儲存所有 TDX API 金鑰配置 (無限多組輪轉池)",
+      "此動作將儲存所有金鑰組至系統輪轉池，API 請求時將依序使用（第 1 順位優先，若失效則切換至第 2 順位，依此類推）。",
       () => {
-        try {
-          localStorage.setItem("TDX_CLIENT_ID", tdxClientId.trim());
-          localStorage.setItem("TDX_CLIENT_SECRET", tdxClientSecret.trim());
-          globalTdxKeyManager.reloadKeys();
-          showNotice("✓ TDX 金鑰已成功儲存並同步更新連線池！");
-          onDataChanged?.();
-        } catch {
-          showNotice("儲存金鑰失敗", "error");
-        }
+        saveStoredTdxKeyPairs(keyPairs);
+        setTdxStatus(globalTdxKeyManager.getStatus());
+        const validCount = keyPairs.filter(
+          (k) => k.isEnabled !== false && k.clientId.trim() && k.clientSecret.trim()
+        ).length;
+        showNotice(`✓ 已成功儲存 ${validCount} 組有效 TDX 金鑰！系統已同步至順序輪轉調度池。`);
+        onDataChanged?.();
       }
     );
   };
 
-  const handleClearTdx = () => {
+  const handleResetTdxKeyPairs = () => {
     executeGuardedAction(
-      "清除 TDX 金鑰憑證",
-      "此動作將清除自訂的 TDX 金鑰，系統將回退至伺服器全自動輪轉池。",
+      "還原為系統預設金鑰池",
+      "此動作將清除所有自訂金鑰，還原為系統預設的輪轉金鑰池。",
       () => {
+        localStorage.removeItem(STORAGE_KEY_TDX_API_KEYS);
         localStorage.removeItem("TDX_CLIENT_ID");
         localStorage.removeItem("TDX_CLIENT_SECRET");
         globalTdxKeyManager.reloadKeys();
-        setTdxClientId("");
-        setTdxClientSecret("");
-        showNotice("✓ 自訂 TDX 金鑰已清除，回退至系統輪轉池。");
+        setKeyPairs([
+          {
+            id: `key-init-${Date.now()}`,
+            clientId: "",
+            clientSecret: "",
+            label: "第 1 順位主要金鑰",
+            isEnabled: true,
+          },
+        ]);
+        setKeyTestResults({});
+        setTdxStatus(globalTdxKeyManager.getStatus());
+        showNotice("✓ 已還原為系統預設金鑰池。");
         onDataChanged?.();
       }
     );
+  };
+
+  const handleProcessBatchImport = () => {
+    if (!batchInputText.trim()) {
+      showNotice("請輸入或貼上金鑰資料", "error");
+      return;
+    }
+
+    try {
+      const parsedPairs: CustomTdxKeyInput[] = [];
+      const trimmed = batchInputText.trim();
+
+      if (trimmed.startsWith("[") && trimmed.endsWith("]")) {
+        const jsonArr = JSON.parse(trimmed);
+        if (Array.isArray(jsonArr)) {
+          jsonArr.forEach((item, idx) => {
+            if (item.clientId && item.clientSecret) {
+              parsedPairs.push({
+                id: `key-batch-${Date.now()}-${idx}`,
+                clientId: String(item.clientId).trim(),
+                clientSecret: String(item.clientSecret).trim(),
+                label: item.label ? String(item.label).trim() : `批次匯入金鑰 #${idx + 1}`,
+                isEnabled: item.isEnabled !== false,
+              });
+            }
+          });
+        }
+      } else {
+        const lines = trimmed.split(/\r?\n/);
+        lines.forEach((line, idx) => {
+          const l = line.trim();
+          if (!l || l.startsWith("#") || l.startsWith("//")) return;
+
+          if (l.includes(",")) {
+            const parts = l.split(",").map((s) => s.trim());
+            if (parts.length >= 2 && parts[0] && parts[1]) {
+              parsedPairs.push({
+                id: `key-batch-${Date.now()}-${idx}`,
+                clientId: parts[0],
+                clientSecret: parts[1],
+                label: parts[2] || `批次金鑰 #${idx + 1}`,
+                isEnabled: true,
+              });
+            }
+          } else if (l.includes("\t") || l.includes(" ")) {
+            const parts = l.split(/\s+/).map((s) => s.trim());
+            if (parts.length >= 2 && parts[0] && parts[1]) {
+              parsedPairs.push({
+                id: `key-batch-${Date.now()}-${idx}`,
+                clientId: parts[0],
+                clientSecret: parts[1],
+                label: parts.slice(2).join(" ") || `批次金鑰 #${idx + 1}`,
+                isEnabled: true,
+              });
+            }
+          }
+        });
+      }
+
+      if (parsedPairs.length === 0) {
+        showNotice("無法辨識有效之金鑰格式。支援格式：每行「Client_ID,Client_Secret,標籤」或 JSON 陣列", "error");
+        return;
+      }
+
+      setKeyPairs((prev) => {
+        const cleanedPrev = prev.filter((k) => k.clientId.trim() || k.clientSecret.trim());
+        return [...cleanedPrev, ...parsedPairs];
+      });
+
+      setIsBatchModalOpen(false);
+      setBatchInputText("");
+      showNotice(`✓ 成功批次匯入 ${parsedPairs.length} 組金鑰！請點擊「儲存全部金鑰」生效。`);
+    } catch (e: any) {
+      showNotice(`批次解析失敗：${e.message}`, "error");
+    }
   };
 
   // 5. 進入人數與訪客流量調整函式 (Visitor Statistics Actions)
@@ -1359,61 +1585,314 @@ export default function AdminAdvancedSettingsModal({
                   )}
                 </div>
 
-                {/* 區塊 2: 交通部 TDX 官方金鑰設定 */}
-                <div className="bg-slate-950/80 p-5 rounded-2xl border border-slate-800 space-y-4">
-                  <div className="space-y-1 pb-3 border-b border-slate-800/80">
-                    <h3 className="text-sm font-bold text-white flex items-center gap-2">
-                      <Key className="h-4 w-4 text-amber-400" />
-                      <span>交通部 TDX 官方金鑰輪轉池設定 (限後台修改)</span>
-                    </h3>
-                    <p className="text-xs text-slate-400">
-                      可輸入您直接向交通部 TDX 申請的 Client ID 與 Secret；若未輸入，系統將全自動採用伺服器後端多通道金鑰輪轉池。
-                    </p>
-                  </div>
-
-                  <div className="space-y-3 font-mono text-xs">
-                    <div>
-                      <label className="block text-slate-300 font-bold mb-1 font-sans">
-                        TDX Client ID
-                      </label>
-                      <input
-                        type="text"
-                        value={tdxClientId}
-                        onChange={(e) => setTdxClientId(e.target.value)}
-                        placeholder="例如：your_client_id-xxxxxxxx-xxxx"
-                        className="w-full px-3.5 py-2.5 bg-slate-900 border border-slate-800 rounded-xl focus:outline-none focus:border-amber-400 text-white"
-                      />
+                {/* 區塊 2: 交通部 TDX 官方多組金鑰輪轉池管理 (支援無限組 API Key-Value Pair 依序使用與備援) */}
+                <div className="bg-slate-950/80 p-5 rounded-2xl border border-slate-800 space-y-5">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-800/80">
+                    <div className="space-y-1">
+                      <div className="flex items-center gap-2">
+                        <Key className="h-4 w-4 text-amber-400" />
+                        <h3 className="text-sm font-bold text-white">
+                          TDX 官方 API 多組金鑰管理與順序輪流系統
+                        </h3>
+                        <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 font-bold">
+                          無限組數支援
+                        </span>
+                      </div>
+                      <p className="text-xs text-slate-400 leading-relaxed">
+                        支援輸入任意多組 TDX Client ID 與 Secret。系統將嚴格依照順序使用（第 1 順位優先；若遭遇 429 限流或失效，自動切換至第 2 順位，依此類推）。全站所有即時查詢與自動採樣均直接共享使用！
+                      </p>
                     </div>
 
-                    <div>
-                      <label className="block text-slate-300 font-bold mb-1 font-sans">
-                        TDX Client Secret
-                      </label>
-                      <input
-                        type="password"
-                        value={tdxClientSecret}
-                        onChange={(e) => setTdxClientSecret(e.target.value)}
-                        placeholder="例如：xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
-                        className="w-full px-3.5 py-2.5 bg-slate-900 border border-slate-800 rounded-xl focus:outline-none focus:border-amber-400 text-white"
-                      />
+                    <div className="flex items-center gap-2 shrink-0">
+                      <button
+                        onClick={() => setIsBatchModalOpen(true)}
+                        className="px-3 py-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-slate-300 border border-slate-700/80 text-xs font-bold transition cursor-pointer flex items-center gap-1.5"
+                      >
+                        <FileText className="h-3.5 w-3.5 text-sky-400" />
+                        <span>批次匯入</span>
+                      </button>
+                      <button
+                        onClick={handleTestAllKeys}
+                        disabled={isTestingAllKeys}
+                        className="px-3 py-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-slate-300 border border-slate-700/80 text-xs font-bold transition cursor-pointer flex items-center gap-1.5 disabled:opacity-50"
+                      >
+                        {isTestingAllKeys ? (
+                          <Loader2 className="h-3.5 w-3.5 animate-spin text-amber-400" />
+                        ) : (
+                          <Zap className="h-3.5 w-3.5 text-amber-400" />
+                        )}
+                        <span>一鍵檢測全部</span>
+                      </button>
                     </div>
                   </div>
 
-                  <div className="flex items-center gap-3 pt-1">
-                    <button
-                      onClick={handleSaveTdx}
-                      className="px-4 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs transition cursor-pointer flex items-center gap-1.5"
-                    >
-                      <CheckCircle2 className="h-4 w-4" />
-                      <span>儲存 TDX 憑證 (限後台)</span>
-                    </button>
+                  {/* 輪轉池即時運作狀態資訊看板 */}
+                  <div className="p-3.5 bg-slate-900/60 rounded-xl border border-slate-800/80 flex flex-wrap items-center justify-between gap-3 text-xs">
+                    <div className="flex items-center gap-3">
+                      <div className="flex items-center gap-2">
+                        <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse"></span>
+                        <span className="text-slate-300 font-bold">調度池狀態：</span>
+                        <span className="text-emerald-400 font-mono font-bold">
+                          {tdxStatus.totalKeys} 組金鑰在線
+                        </span>
+                      </div>
+                      <div className="text-slate-400">
+                        目前使用順位：
+                        <span className="text-amber-400 font-bold font-mono ml-1">
+                          第 {tdxStatus.activeKeyIndex + 1} 順位 ({tdxStatus.activeKeyLabel})
+                        </span>
+                      </div>
+                    </div>
 
-                    <button
-                      onClick={handleClearTdx}
-                      className="px-3.5 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-xs transition cursor-pointer"
-                    >
-                      清除金鑰 (使用系統池)
-                    </button>
+                    <div className="text-[11px] text-slate-400 flex items-center gap-2 font-mono">
+                      <span>輪轉次數: {tdxStatus.rotationCount}</span>
+                      {tdxStatus.lastRotationTimestamp && (
+                        <span>• 最後切換: {new Date(tdxStatus.lastRotationTimestamp).toLocaleTimeString()}</span>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* 批次匯入對話框 (Batch Import Overlay) */}
+                  {isBatchModalOpen && (
+                    <div className="p-4 bg-slate-900 rounded-xl border border-sky-500/40 space-y-3">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <FileText className="h-4 w-4 text-sky-400" />
+                          <h4 className="text-xs font-bold text-white">批次快速貼上 / 匯入金鑰</h4>
+                        </div>
+                        <button
+                          onClick={() => setIsBatchModalOpen(false)}
+                          className="text-slate-400 hover:text-white text-xs"
+                        >
+                          ✕
+                        </button>
+                      </div>
+                      <p className="text-[11px] text-slate-400">
+                        每行一組，格式：<code className="text-amber-300">Client_ID,Client_Secret,標籤名稱</code> 或直接貼上 JSON 陣列。
+                      </p>
+                      <textarea
+                        rows={4}
+                        value={batchInputText}
+                        onChange={(e) => setBatchInputText(e.target.value)}
+                        placeholder={`your-client-id-1,your-client-secret-1,主要金鑰\nyour-client-id-2,your-client-secret-2,備援金鑰 2\nyour-client-id-3,your-client-secret-3,備援金鑰 3`}
+                        className="w-full p-3 bg-slate-950 border border-slate-800 rounded-xl font-mono text-xs text-slate-200 focus:outline-none focus:border-sky-400"
+                      />
+                      <div className="flex items-center justify-end gap-2">
+                        <button
+                          onClick={() => setIsBatchModalOpen(false)}
+                          className="px-3 py-1.5 rounded-lg bg-slate-800 text-slate-300 text-xs hover:bg-slate-700"
+                        >
+                          取消
+                        </button>
+                        <button
+                          onClick={handleProcessBatchImport}
+                          className="px-4 py-1.5 rounded-lg bg-sky-500 hover:bg-sky-400 text-slate-950 font-bold text-xs"
+                        >
+                          確認解析並加入清單
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* 金鑰清單列表 (Unlimited List of Key Pairs) */}
+                  <div className="space-y-3">
+                    {keyPairs.map((pair, index) => {
+                      const testRes = keyTestResults[pair.id];
+                      const isTesting = testingKeyIds[pair.id];
+                      const isSecretVisible = showKeySecrets[pair.id];
+
+                      return (
+                        <div
+                          key={pair.id}
+                          className={`p-4 rounded-xl border transition ${
+                            pair.isEnabled !== false
+                              ? "bg-slate-900/90 border-slate-800 hover:border-slate-700"
+                              : "bg-slate-950/40 border-slate-900 opacity-60"
+                          }`}
+                        >
+                          {/* 頂部順位、標籤與排序工具列 */}
+                          <div className="flex items-center justify-between gap-2 pb-3 mb-3 border-b border-slate-800/60">
+                            <div className="flex items-center gap-2.5 flex-1 min-w-0">
+                              <span
+                                className={`text-[11px] px-2.5 py-0.5 rounded-md font-bold font-mono ${
+                                  index === 0
+                                    ? "bg-amber-500/20 text-amber-300 border border-amber-500/30"
+                                    : "bg-slate-800 text-slate-300 border border-slate-700"
+                                }`}
+                              >
+                                {index === 0 ? "第 1 順位 (主要)" : `第 ${index + 1} 順位 (備援)`}
+                              </span>
+
+                              <input
+                                type="text"
+                                value={pair.label || ""}
+                                onChange={(e) =>
+                                  handleUpdateKeyField(pair.id, "label", e.target.value)
+                                }
+                                placeholder="自訂金鑰名稱 (例如：專案 A 主要通道)"
+                                className="px-2.5 py-1 bg-slate-950 border border-slate-800 rounded-lg text-xs text-white focus:outline-none focus:border-amber-400 max-w-[220px]"
+                              />
+
+                              <label className="flex items-center gap-1.5 text-xs text-slate-400 cursor-pointer select-none">
+                                <input
+                                  type="checkbox"
+                                  checked={pair.isEnabled !== false}
+                                  onChange={(e) =>
+                                    handleUpdateKeyField(pair.id, "isEnabled", e.target.checked)
+                                  }
+                                  className="rounded border-slate-700 text-amber-500 focus:ring-amber-500"
+                                />
+                                <span>啟用</span>
+                              </label>
+                            </div>
+
+                            {/* 順位上下調整與刪除按鈕 */}
+                            <div className="flex items-center gap-1 shrink-0">
+                              <button
+                                onClick={() => handleMoveKey(index, "up")}
+                                disabled={index === 0}
+                                title="提升優先順位"
+                                className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer"
+                              >
+                                <ArrowUp className="h-3.5 w-3.5" />
+                              </button>
+                              <button
+                                onClick={() => handleMoveKey(index, "down")}
+                                disabled={index === keyPairs.length - 1}
+                                title="降低優先順位"
+                                className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer"
+                              >
+                                <ArrowDown className="h-3.5 w-3.5" />
+                              </button>
+                              <button
+                                onClick={() => handleDeleteKeyPair(pair.id)}
+                                title="刪除此組金鑰"
+                                className="p-1.5 rounded-lg bg-rose-950/40 hover:bg-rose-900/60 text-rose-300 border border-rose-800/40 cursor-pointer ml-1"
+                              >
+                                <Trash2 className="h-3.5 w-3.5" />
+                              </button>
+                            </div>
+                          </div>
+
+                          {/* Client ID 與 Client Secret 輸入欄位 */}
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs font-mono">
+                            <div>
+                              <label className="block text-slate-400 font-sans font-bold mb-1">
+                                TDX Client ID
+                              </label>
+                              <input
+                                type="text"
+                                value={pair.clientId}
+                                onChange={(e) =>
+                                  handleUpdateKeyField(pair.id, "clientId", e.target.value)
+                                }
+                                placeholder="例如：your-client-id-xxxxxxxx"
+                                className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-xl text-white focus:outline-none focus:border-amber-400 text-xs"
+                              />
+                            </div>
+
+                            <div>
+                              <label className="block text-slate-400 font-sans font-bold mb-1">
+                                TDX Client Secret
+                              </label>
+                              <div className="relative">
+                                <input
+                                  type={isSecretVisible ? "text" : "password"}
+                                  value={pair.clientSecret}
+                                  onChange={(e) =>
+                                    handleUpdateKeyField(pair.id, "clientSecret", e.target.value)
+                                  }
+                                  placeholder="例如：xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+                                  className="w-full px-3 py-2 pr-9 bg-slate-950 border border-slate-800 rounded-xl text-white focus:outline-none focus:border-amber-400 text-xs"
+                                />
+                                <button
+                                  type="button"
+                                  onClick={() => handleToggleSecretVisibility(pair.id)}
+                                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300"
+                                >
+                                  {isSecretVisible ? (
+                                    <EyeOff className="h-3.5 w-3.5" />
+                                  ) : (
+                                    <Eye className="h-3.5 w-3.5" />
+                                  )}
+                                </button>
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* 測試連線狀態列 */}
+                          <div className="flex flex-wrap items-center justify-between gap-2 mt-3 pt-2 text-xs">
+                            <button
+                              onClick={() =>
+                                handleTestSingleKey(pair.id, pair.clientId, pair.clientSecret)
+                              }
+                              disabled={isTesting || !pair.clientId || !pair.clientSecret}
+                              className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold transition flex items-center gap-1.5 disabled:opacity-40 cursor-pointer"
+                            >
+                              {isTesting ? (
+                                <Loader2 className="h-3.5 w-3.5 animate-spin text-amber-400" />
+                              ) : (
+                                <Terminal className="h-3.5 w-3.5 text-emerald-400" />
+                              )}
+                              <span>{isTesting ? "驗證連線中..." : "測試此組金鑰連線"}</span>
+                            </button>
+
+                            {testRes && (
+                              <div
+                                className={`text-[11px] font-sans px-2.5 py-1 rounded-lg border flex items-center gap-1.5 ${
+                                  testRes.success
+                                    ? "bg-emerald-950/60 border-emerald-800/80 text-emerald-300"
+                                    : "bg-rose-950/60 border-rose-800/80 text-rose-300"
+                                }`}
+                              >
+                                {testRes.success ? (
+                                  <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400 shrink-0" />
+                                ) : (
+                                  <AlertTriangle className="h-3.5 w-3.5 text-rose-400 shrink-0" />
+                                )}
+                                <span>
+                                  {testRes.message} ({testRes.latencyMs}ms)
+                                </span>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  {/* 新增金鑰按鈕 */}
+                  <button
+                    onClick={handleAddNewKeyPair}
+                    className="w-full py-3 rounded-xl border-2 border-dashed border-slate-800 hover:border-amber-500/50 text-slate-400 hover:text-amber-300 font-bold text-xs transition flex items-center justify-center gap-2 cursor-pointer bg-slate-900/30"
+                  >
+                    <Plus className="h-4 w-4 text-amber-400" />
+                    <span>新增一組 TDX API 金鑰（支援無限組遞補輪轉）</span>
+                  </button>
+
+                  {/* 儲存與重設控制按鈕列 */}
+                  <div className="flex flex-wrap items-center justify-between gap-3 pt-3 border-t border-slate-800">
+                    <div className="flex items-center gap-3">
+                      <button
+                        onClick={handleSaveAllKeyPairs}
+                        className="px-5 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs transition cursor-pointer flex items-center gap-1.5 shadow-lg shadow-amber-500/20"
+                      >
+                        <CheckCircle2 className="h-4 w-4" />
+                        <span>儲存所有金鑰並即時生效 ({keyPairs.length} 組)</span>
+                      </button>
+
+                      <button
+                        onClick={handleResetTdxKeyPairs}
+                        className="px-3.5 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-xs transition cursor-pointer flex items-center gap-1.5"
+                      >
+                        <RotateCcw className="h-3.5 w-3.5" />
+                        <span>還原系統預設金鑰池</span>
+                      </button>
+                    </div>
+
+                    <div className="text-[11px] text-slate-400">
+                      💡 設定後自動同步至所有即時數據查詢與自動取樣排程。
+                    </div>
                   </div>
                 </div>
               </div>
