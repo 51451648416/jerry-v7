@@ -90,18 +90,9 @@ export default function TdxConfigModal({
                   type="text"
                   value={clientId}
                   onChange={(e) => setClientId(e.target.value)}
-                  placeholder="例如：your_client_id-xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
-                  className={`w-full px-3.5 py-2.5 bg-slate-950 border rounded-lg focus:outline-none text-white placeholder-slate-600 transition-colors duration-150 font-mono text-xs ${
-                    clientId.trim() && clientId.trim().split("-").slice(1).join("-").length < 36
-                      ? "border-rose-500 focus:border-rose-500"
-                      : "border-slate-800 focus:border-emerald-500"
-                  }`}
+                  placeholder="例如：jerry0903-d82c8d89-56b2-4628"
+                  className="w-full px-3.5 py-2.5 bg-slate-950 border border-slate-800 focus:border-emerald-500 rounded-lg focus:outline-none text-white placeholder-slate-600 transition-colors duration-150 font-mono text-xs"
                 />
-                {clientId.trim() && clientId.trim().split("-").slice(1).join("-").length < 36 && (
-                  <p className="text-[11px] text-rose-400 mt-1.5 leading-relaxed font-sans">
-                    ⚠️ 偵測到您的 Client ID 疑似被截斷！完整的 ID 格式應包含您的使用者名稱與一個完整 36 字元的 UUID（格式如：jerry09032-f563b9b2-6af4-4437-xxxx-xxxxxxxxxxxx）。目前偵測到的 UUID 部分長度不足。
-                  </p>
-                )}
               </div>
 
               <div>

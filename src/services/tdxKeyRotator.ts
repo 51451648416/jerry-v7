@@ -154,9 +154,9 @@ export class TdxKeyRotationSystem {
     const builtInDefaults = [
       {
         id: "key-builtin-primary",
-        clientId: "jerry09032-f563b9b2-6af4-4437",
-        clientSecret: "0b749325-d88e-4e11-9d4d-318cb6f34fbe",
-        label: "TDX 系統備援金鑰 1",
+        clientId: "jerry0903-d82c8d89-56b2-4628",
+        clientSecret: "5fdae95b-b2d6-4b80-a153-2238d6e74db5",
+        label: "TDX 系統主要金鑰",
       },
     ];
 
