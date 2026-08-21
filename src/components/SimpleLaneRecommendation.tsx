@@ -53,7 +53,7 @@ export default function SimpleLaneRecommendation({
 
   const speedDiff = Math.abs(lane1EqSpeed - lane2EqSpeed);
   const diffSecVal = Math.abs(diffSec ?? (formattedLane1TravelSec - formattedLane2TravelSec));
-  const isBothEqual = diffSecVal < 30 || (speedDiff < 2.5 && lane1EqSpeed > 0 && lane2EqSpeed > 0);
+  const isBothEqual = diffSecVal < 10 || (speedDiff < 2.5 && lane1EqSpeed > 0 && lane2EqSpeed > 0);
   const isLane1Recommended = !isBothEqual && fasterLaneId === 1;
   const isLane2Recommended = !isBothEqual && fasterLaneId === 2;
 
@@ -128,10 +128,10 @@ export default function SimpleLaneRecommendation({
             {estState.isLateNightHours
               ? "依規範深夜 02:00 - 04:00 不進行延遲補償或模型修正，直接忠實呈現 TDX 車輛偵測器原始觀測資料。全線暢通自由流，兩側車道皆可安全順行。"
               : isBothEqual
-              ? `雙車道時間差僅 ${Math.abs(Math.round(diffSecVal))} 秒（小於 30 秒），時間相近，兩邊都可以選擇。`
+              ? `雙車道時間差僅 ${Math.abs(Math.round(diffSecVal))} 秒（小於 10 秒），時間相近，兩邊都可以選擇。`
               : isLane1Recommended
-              ? `內側車道領先 +${speedDiff.toFixed(1)} km/h，預估省時 ${Math.abs(Math.round(diffSec))} 秒 (超逾 30 秒建議門檻)。`
-              : `外側車道領先 +${speedDiff.toFixed(1)} km/h，預估省時 ${Math.abs(Math.round(diffSec))} 秒 (超逾 30 秒建議門檻)。`}
+              ? `內側車道領先 +${speedDiff.toFixed(1)} km/h，預估省時 ${Math.abs(Math.round(diffSec))} 秒 (超逾 10 秒建議門檻)。`
+              : `外側車道領先 +${speedDiff.toFixed(1)} km/h，預估省時 ${Math.abs(Math.round(diffSec))} 秒 (超逾 10 秒建議門檻)。`}
           </p>
         </div>
 

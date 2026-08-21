@@ -589,19 +589,19 @@ export function runVdTrafficEstimator(
     fasterLaneId = lane1State.travelTimeSec < lane2State.travelTimeSec ? 1 : 2;
     comparisonTitle = `【極端異常路況確認】雙車道二次重算速差達 ${doubleVerification.recalculatedLaneDiffKmh.toFixed(1)} km/h（仍超過 23 km/h 門檻）：${fasterSideLabel} 車道顯著領先！`;
     safetyNotice = `【極端路況警告】兩車道速差超過 23 km/h 經二次獨立重算後仍達 ${doubleVerification.recalculatedLaneDiffKmh.toFixed(1)} km/h，直接判定為極端路況。請維持安全車距與現場燈號，直接參考下方 API 原始傳輸觀測數據。`;
-  } else if (diffRoundedSec < 30) {
-    // 條件一：若兩車道時間差 ΔT 小於 30 秒（節省時間與時間差 < 30 秒）
+  } else if (diffRoundedSec < 10) {
+    // 條件一：若兩車道時間差 ΔT 小於 10 秒（節省時間與時間差 < 10 秒）
     // 判定邏輯：差異極小，兩邊都可以選擇（兩車道皆可順行）。
     fasterLaneId = null;
-    comparisonTitle = `車道交通狀態比較：兩車道旅行時間差僅 ${diffRoundedSec} 秒（小於 30 秒），兩邊都可以。`;
+    comparisonTitle = `車道交通狀態比較：兩車道旅行時間差僅 ${diffRoundedSec} 秒（小於 10 秒），兩邊都可以。`;
     safetyNotice =
-      "兩車道節省時間差小於 30 秒，兩邊都可以選擇，維持當前車道順行；請依現場號誌行駛，請勿於隧道內任意變換車道。";
+      "兩車道節省時間差小於 10 秒，兩邊都可以選擇，維持當前車道順行；請依現場號誌行駛，請勿於隧道內任意變換車道。";
   } else {
-    // 條件二：若兩車道時間差 ΔT 達到 30 秒以上
+    // 條件二：若兩車道時間差 ΔT 達到 10 秒以上
     // 判定邏輯：差異顯著，明確指出較快的車道。
     const fasterSideLabel = lane1State.travelTimeSec < lane2State.travelTimeSec ? "內側" : "外側";
     fasterLaneId = lane1State.travelTimeSec < lane2State.travelTimeSec ? 1 : 2;
-    comparisonTitle = `車道交通狀態比較：${fasterSideLabel} 車道旅行時間較短 ${diffRoundedSec} 秒（節省時間達 30 秒以上）。`;
+    comparisonTitle = `車道交通狀態比較：${fasterSideLabel} 車道旅行時間較短 ${diffRoundedSec} 秒（節省時間達 10 秒以上）。`;
     safetyNotice = `${fasterSideLabel} 車道目前估計旅行時間較短 ${diffRoundedSec} 秒；請依現場車道管制、號誌及交通狀況行駛，不因本系統資訊而於隧道內任意變換車道。`;
   }
 

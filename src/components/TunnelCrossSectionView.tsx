@@ -30,8 +30,8 @@ export default function TunnelCrossSectionView({
 
   const speedDiff = Math.abs(lane1Speed - lane2Speed);
   const diffSec = Math.abs(Math.round(estimatorOutput?.estimated_state?.laneComparison?.differenceSec ?? (lane1TimeSec && lane2TimeSec ? lane1TimeSec - lane2TimeSec : 0)));
-  // 若兩車道節省時間或時間差小於 30 秒 (或速差小於 2.5 km/h)，視為兩邊都可以
-  const isBothLanesEqual = (diffSec < 30) || (speedDiff < 2.5 && lane1Speed > 0 && lane2Speed > 0);
+  // 若兩車道節省時間或時間差小於 10 秒 (或速差小於 2.5 km/h)，視為兩邊都可以
+  const isBothLanesEqual = (diffSec < 10) || (speedDiff < 2.5 && lane1Speed > 0 && lane2Speed > 0);
   const isLane1Faster = !isBothLanesEqual && fasterLaneId === 1;
   const isLane2Faster = !isBothLanesEqual && fasterLaneId === 2;
 
@@ -175,7 +175,7 @@ export default function TunnelCrossSectionView({
                 </span>
               ) : (
                 <span className="bg-teal-500/20 text-teal-300 border border-teal-500/30 px-2 py-0.5 rounded-md font-bold text-xs">
-                  {lane1Speed === 0 || lane2Speed === 0 ? "⚠️ 包含車道封閉管制" : `時間差僅 ${diffSec} 秒（小於 30 秒）・兩邊都可以`}
+                  {lane1Speed === 0 || lane2Speed === 0 ? "⚠️ 包含車道封閉管制" : `時間差僅 ${diffSec} 秒（小於 10 秒）・兩邊都可以`}
                 </span>
               )}
             </div>
