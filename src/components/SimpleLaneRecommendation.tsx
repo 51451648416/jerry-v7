@@ -53,7 +53,7 @@ export default function SimpleLaneRecommendation({
 
   const speedDiff = Math.abs(lane1EqSpeed - lane2EqSpeed);
   const diffSecVal = Math.abs(diffSec ?? (formattedLane1TravelSec - formattedLane2TravelSec));
-  const isBothEqual = diffSecVal < 10 || (speedDiff < 2.5 && lane1EqSpeed > 0 && lane2EqSpeed > 0);
+  const isBothEqual = fasterLaneId === null || diffSecVal < 10;
   const isLane1Recommended = !isBothEqual && fasterLaneId === 1;
   const isLane2Recommended = !isBothEqual && fasterLaneId === 2;
 

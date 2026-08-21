@@ -78,7 +78,7 @@ export default function TunnelGisMap({
     });
     const laneComp = estimatorOutput.estimated_state.laneComparison;
     const diffSecVal = Math.abs(laneComp.differenceSec);
-    const isBoth = diffSecVal < 30 || fasterLaneId === null;
+    const isBoth = diffSecVal < 10 || fasterLaneId === null;
     const avgSpd =
       fasterLaneId === 1
         ? laneComp.lane1.equivalentTravelSpeedKmh
