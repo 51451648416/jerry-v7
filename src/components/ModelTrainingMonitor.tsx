@@ -15,6 +15,7 @@ import {
   Compass,
   Lock,
   Unlock,
+  Download,
 } from "lucide-react";
 import {
   getLearnedParameters,
@@ -22,6 +23,7 @@ import {
   getContinuousLearningStatus,
   trainModelOnDataset,
   resetParametersToBaseline,
+  exportLearnedParametersToJson,
 } from "../estimator/modelTrainingEngine";
 import { getStoredDataset } from "../services/datasetRepository";
 import { isAdminAuthenticated } from "../services/adminAuth";
@@ -65,25 +67,40 @@ export default function ModelTrainingMonitor({
   const runTrainingExecution = async () => {
     setIsTraining(true);
     setTrainingSuccessMsg(null);
-    const records = getStoredDataset();
+    try {
+      const records = getStoredDataset();
 
-    // 模擬逐 Epoch 梯度更新
-    for (let ep = 1; ep <= 10; ep++) {
-      setCurrentEpoch(ep);
-      await new Promise((r) => setTimeout(r, 80));
+      // 模擬逐 Epoch 梯度更新
+      for (let ep = 1; ep <= 10; ep++) {
+        setCurrentEpoch(ep);
+        await new Promise((r) => setTimeout(r, 60));
+      }
+
+      const { optimizedParams, epochHistory } = trainModelOnDataset(records, 10);
+      setParams(optimizedParams);
+      setHistory(epochHistory);
+      setLearningStatus(getContinuousLearningStatus(records));
+      setTrainingSuccessMsg(
+        `✓ 訓練完成！已完成 10 個 Epoch 梯度校準，車道切換準確率提升至 ${(epochHistory[epochHistory.length - 1].laneSwitchAccuracyPercent ?? 96.8).toFixed(1)}%`
+      );
+
+      if (onModelUpdated) {
+        onModelUpdated();
+      }
+    } catch (err: any) {
+      console.error("Training error:", err);
+      alert(`訓練過程發生異常：${err?.message || "未知錯誤"}`);
+    } finally {
+      setIsTraining(false);
     }
+  };
 
-    const { optimizedParams, epochHistory } = trainModelOnDataset(records, 10);
-    setParams(optimizedParams);
-    setHistory(epochHistory);
-    setLearningStatus(getContinuousLearningStatus(records));
-    setIsTraining(false);
-    setTrainingSuccessMsg(
-      `✓ 訓練完成！已完成 10 個 Epoch 梯度校準，車道切換準確率提升至 ${(epochHistory[epochHistory.length - 1].laneSwitchAccuracyPercent ?? 96.8).toFixed(1)}%`
-    );
-
-    if (onModelUpdated) {
-      onModelUpdated();
+  const handleExportModel = () => {
+    try {
+      exportLearnedParametersToJson(params);
+      setTrainingSuccessMsg("✓ 訓練完成之機器學習模型與調整參數已成功匯出為 JSON 檔案！");
+    } catch (err: any) {
+      alert(`匯出失敗：${err?.message || "未知錯誤"}`);
     }
   };
 
@@ -171,6 +188,15 @@ export default function ModelTrainingMonitor({
                 <span>執行多目標梯度微調 (Train 10 Epochs)</span>
               </>
             )}
+          </button>
+
+          <button
+            onClick={handleExportModel}
+            className="px-3.5 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-sky-300 border border-slate-700 text-xs font-bold flex items-center gap-1.5 transition cursor-pointer"
+            title="匯出訓練完成之機器學習模型參數與權重為 JSON 檔案"
+          >
+            <Download className="h-4 w-4" />
+            <span>匯出模型 (JSON)</span>
           </button>
 
           <button

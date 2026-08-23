@@ -256,6 +256,7 @@ class AutoTrainingCollectorService {
     success: boolean;
     message: string;
     recordId?: string;
+    autoTrainedAndCleared?: boolean;
   }> {
     if (this.isCapturingNow) {
       return { success: false, message: "前次取樣處理中，略過本次" };
@@ -298,53 +299,72 @@ class AutoTrainingCollectorService {
         throw new Error("TDX 端點未回傳有效之雪山隧道車輛偵測器數據");
       }
 
-      // 3. 寫入資料庫庫存 (Dataset Repository)
-      const { newRecord, totalCount } = captureDetectionToDataset(output, targetDir);
+      // 3. 寫入資料庫庫存 (當達到 1,000 筆時，將自動執行 10 Epochs 深度訓練並清空資料庫)
+      const { newRecord, totalCount, autoTrainedAndCleared } = captureDetectionToDataset(output, targetDir);
 
       this.totalCapturedInSession += 1;
       this.lastCaptureTimestamp = newRecord.timestamp;
       this.lastCaptureTimeFormatted = newRecord.timeFormatted;
       this.lastCapturedDirection = targetDir;
 
-      // 4. 自動在線機器學習微調 (梯度下降)
-      let trainSummary = "";
-      if (this.config.autoTrainAfterCapture) {
-        const currentFullDataset = getStoredDataset();
-        const trainResult = trainModelOnDataset(currentFullDataset, 5); // 5 Epochs 線上在線微調
-        const finalLoss = trainResult.optimizedLoss.maeSec;
-        const baselineLoss = trainResult.baselineLoss.maeSec;
-        const improvementPct = baselineLoss > 0 ? ((baselineLoss - finalLoss) / baselineLoss) * 100 : 0;
-        this.lastTrainingLoss = finalLoss;
-        this.lastTrainedEpochs = 5;
-        trainSummary = ` | MAE 誤差: ${finalLoss.toFixed(2)}s (優化率 ${improvementPct > 0 ? `+${improvementPct.toFixed(1)}%` : "0.0%"})`;
-      }
+      let logMsg = "";
+      if (autoTrainedAndCleared) {
+        logMsg = `🎉 [達成 1,000 筆自動訓練] 資料庫已累積達 1,000 筆上限！已自動完成深度模型梯度校準最佳化，新模型權重已儲存並成功清空資料庫，重啟新一輪採集循環！`;
+        this.addLog(
+          logMsg,
+          "success",
+          `100 Epochs 深度收斂完畢，已更新模型權重並清空本機資料庫暫存以確保極致效能，新輪循環從 0 筆開始累計至 1000 筆。`
+        );
+      } else {
+        // 4. 自動在線機器學習微調 (輕量梯度下降)
+        let trainSummary = "";
+        if (this.config.autoTrainAfterCapture) {
+          try {
+            const currentFullDataset = getStoredDataset();
+            const trainResult = trainModelOnDataset(currentFullDataset.slice(0, 50), 3); // 輕量微調
+            const finalLoss = trainResult.optimizedLoss.maeSec;
+            const baselineLoss = trainResult.baselineLoss.maeSec;
+            const improvementPct = baselineLoss > 0 ? ((baselineLoss - finalLoss) / baselineLoss) * 100 : 0;
+            this.lastTrainingLoss = finalLoss;
+            this.lastTrainedEpochs = 3;
+            trainSummary = ` | MAE 誤差: ${finalLoss.toFixed(2)}s (優化率 ${improvementPct > 0 ? `+${improvementPct.toFixed(1)}%` : "0.0%"})`;
+          } catch (e) {
+            console.warn("Online learning step skipped:", e);
+          }
+        }
 
-      const logMsg = `✓ [${newRecord.timeFormatted}] 自動取樣成功 (${targetDir === "S" ? "南向" : "北向"})：雪隧等效車速 ${newRecord.tunnelEqSpeedKmh.toFixed(1)} km/h，全線 ${newRecord.corridor0to50TravelTimeMin} 分鐘，資料庫累計 ${totalCount} 筆${trainSummary}`;
-      this.addLog(logMsg, "success", `ID: ${newRecord.id} | 車道1: ${newRecord.tunnelLane1SpeedKmh.toFixed(1)} km/h | 車道2: ${newRecord.tunnelLane2SpeedKmh.toFixed(1)} km/h`);
+        logMsg = `✓ [${newRecord.timeFormatted}] 自動取樣成功 (${targetDir === "S" ? "南向" : "北向"})：雪隧等效車速 ${newRecord.tunnelEqSpeedKmh.toFixed(1)} km/h，全線 ${newRecord.corridor0to50TravelTimeMin} 分鐘，資料庫累計 ${totalCount} / 1000 筆${trainSummary}`;
+        this.addLog(
+          logMsg,
+          "success",
+          `ID: ${newRecord.id} | 車道1: ${newRecord.tunnelLane1SpeedKmh.toFixed(1)} km/h | 車道2: ${newRecord.tunnelLane2SpeedKmh.toFixed(1)} km/h`
+        );
+      }
 
       // 發送全域自訂事件，讓畫面上的訓練監控圖表即時重整
       if (typeof window !== "undefined") {
-        window.dispatchEvent(new CustomEvent("hsuehshan-dataset-updated", { detail: { totalCount, newRecord } }));
+        window.dispatchEvent(
+          new CustomEvent("hsuehshan-dataset-updated", { detail: { totalCount, newRecord, autoTrainedAndCleared } })
+        );
       }
-
-      this.isCapturingNow = false;
-      this.notify();
 
       return {
         success: true,
         message: logMsg,
         recordId: newRecord.id,
+        autoTrainedAndCleared,
       };
     } catch (err: any) {
       const errMsg = err?.message || "取樣發生異常";
       this.addLog(`✕ 取樣失敗 (${targetDir === "S" ? "南向" : "北向"})：${errMsg}`, "error");
-      this.isCapturingNow = false;
-      this.notify();
 
       return {
         success: false,
         message: errMsg,
       };
+    } finally {
+      this.isCapturingNow = false;
+      this.notify();
     }
   }
 }

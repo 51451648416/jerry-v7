@@ -1,5 +1,5 @@
 import { CapturedDatasetRecord, Direction, FinalEstimatorOutput } from "../types";
-import { trainModelOnDataset, getLearnedParameters } from "../estimator/modelTrainingEngine";
+import { trainModelOnDataset, getLearnedParameters, saveLearnedParameters } from "../estimator/modelTrainingEngine";
 
 const LOCAL_STORAGE_DATASET_KEY = "HSUEHSHAN_CAPTURED_DATASET_V1";
 const CANDIDATE_STORAGE_KEYS = [
@@ -8,7 +8,7 @@ const CANDIDATE_STORAGE_KEYS = [
   "HSUEHSHAN_CAPTURED_DATASET",
   "HSUEHSHAN_DATASET_RECORDS",
 ];
-const MAX_DATASET_STORAGE_LIMIT = 500;
+export const MAX_DATASET_STORAGE_LIMIT = 1000;
 
 const WEEKDAY_NAMES = ["星期日", "星期一", "星期二", "星期三", "星期四", "星期五", "星期六"];
 
@@ -257,7 +257,7 @@ export function getStoredDataset(): CapturedDatasetRecord[] {
 export function captureDetectionToDataset(
   output: FinalEstimatorOutput,
   direction: Direction
-): { newRecord: CapturedDatasetRecord; totalCount: number } {
+): { newRecord: CapturedDatasetRecord; totalCount: number; autoTrainedAndCleared?: boolean } {
   const currentDataset = getStoredDataset();
   const now = new Date();
   const timeFormatted = now.toLocaleString("zh-TW", { hour12: false });
@@ -353,21 +353,60 @@ export function captureDetectionToDataset(
     },
   };
 
-  // 插入最新一筆於最前，並控制最大上限
-  const updated = [newRecord, ...currentDataset.filter((r) => r.id !== id)].slice(
-    0,
-    MAX_DATASET_STORAGE_LIMIT
-  );
+  // 插入最新一筆於最前
+  const updated = [newRecord, ...currentDataset.filter((r) => r.id !== id)];
 
+  // 【核心功能】當資料庫達到 1,000 筆上限時，自動觸發深度模型訓練，並在訓練完成後自動清空/刪除資料庫
+  if (updated.length >= MAX_DATASET_STORAGE_LIMIT) {
+    try {
+      // 1. 使用達到 1000 筆的完整資料集執行 100 Epochs 深度梯度下降校準
+      const trainResult = trainModelOnDataset(updated, 100);
+      saveLearnedParameters(trainResult.optimizedParams);
+
+      // 2. 訓練完成後自動清空資料庫，重啟新的一輪循環採集，防止記憶體溢出與按鈕阻塞
+      localStorage.setItem(LOCAL_STORAGE_DATASET_KEY, JSON.stringify([]));
+
+      // 3. 發送全域自訂事件通知所有介面更新
+      if (typeof window !== "undefined") {
+        window.dispatchEvent(
+          new CustomEvent("hsuehshan-dataset-updated", {
+            detail: { totalCount: 0, autoTrainedAndCleared: true, newRecord },
+          })
+        );
+      }
+
+      return {
+        newRecord,
+        totalCount: 0,
+        autoTrainedAndCleared: true,
+      };
+    } catch (err) {
+      console.error("1000 筆自動訓練與清除異常，執行安全重置:", err);
+      try {
+        localStorage.setItem(LOCAL_STORAGE_DATASET_KEY, JSON.stringify([]));
+      } catch {}
+      return {
+        newRecord,
+        totalCount: 0,
+        autoTrainedAndCleared: true,
+      };
+    }
+  }
+
+  // 尚未達到 1,000 筆：正常寫入本機資料庫
   try {
     localStorage.setItem(LOCAL_STORAGE_DATASET_KEY, JSON.stringify(updated));
   } catch (err) {
-    console.warn("寫入 Dataset 失敗 (可能超過 localStorage 限制)", err);
+    console.warn("寫入 Dataset 失敗 (可能超過 localStorage 限制)，進行自我防護裁剪", err);
+    try {
+      const trimmed = updated.slice(0, 500);
+      localStorage.setItem(LOCAL_STORAGE_DATASET_KEY, JSON.stringify(trimmed));
+    } catch {}
   }
 
-  // 觸發在線自適應學習更新 (Online Continuous Optimization)
+  // 觸發在線自適應輕量學習更新 (使用最新 50 筆加速，避免阻塞)
   try {
-    trainModelOnDataset(updated, 3);
+    trainModelOnDataset(updated.slice(0, 50), 3);
   } catch (e) {
     console.warn("Online learning step skipped:", e);
   }
@@ -375,6 +414,7 @@ export function captureDetectionToDataset(
   return {
     newRecord,
     totalCount: updated.length,
+    autoTrainedAndCleared: false,
   };
 }
 

@@ -566,20 +566,28 @@ export interface CapturedDatasetRecord {
 }
 
 export interface LearnedModelParameters {
-  // 全線與雪隧總體物理與統計參數 (Macro Traffic Dynamics)
-  freeFlowSpeedKmh: number; // v_f (Baseline 90.0)
-  criticalDensityKcVehPerLane: number; // k_c (Baseline 45.0)
-  capacityQMaxVehPerLane: number; // q_max (Baseline 2025.0)
-  greenshieldsExponentM: number; // m (Baseline 1.0)
-  kalmanNoiseRScale: number; // R scale (Baseline 1.0)
-  latencyDecayTauFactor: number; // tau factor (Baseline 1.0)
-  diurnalPeakWeight: number; // Diurnal weight (Baseline 1.0)
+  // 全線與雪隧總體物理與統計參數 (Macro Traffic Dynamics & LWR)
+  freeFlowSpeedKmh: number; // 自由流速 v_f (km/h)
+  criticalDensityVehKm?: number; // 臨界密度 k_c (veh/km)
+  criticalDensityKcVehPerLane: number; // 臨界密度 k_c (veh/lane/km)
+  maxCapacityVehHr?: number; // 單車道容量極限 q_max (veh/h)
+  capacityQMaxVehPerLane: number; // 單車道容量極限 q_max (veh/lane/h)
+  hysteresisLagFactor?: number; // 滯後傳播因子 (Hysteresis Lag)
+  latencyDecayTauFactor: number; // 滯後衰減因子
+  jamDensityVehKm?: number; // 阻塞密度 k_jam (veh/km)
+  densityExponentM?: number; // LWR 速度衰減非線性指數
+  greenshieldsExponentM: number; // Greenshields / LWR 衰減指數
+  shockwaveDecayRate?: number; // 衝擊波空間耗散係數
 
   // 隧道內車道切換與分流決策學習參數 (Tunnel Lane Switching & Allocation Dynamics)
-  laneSwitchMarginSec: number; // 車道切換收益門檻 ΔT (Baseline 18.0 秒)
-  lane1SpeedBiasFactor: number; // 內側車道(Lane 1)相對阻力與流速偏差修正 (Baseline 1.02)
-  laneCouplingFriction: number; // 雙車道紊流耦合阻力與跨車道剪力係數 (Baseline 0.12)
-  laneChoiceSensitivity: number; // 車道選擇溫度/靈敏度係數 (Baseline 0.08)
+  laneSwitchMarginSec: number; // 車道切換收益門檻 ΔT (秒)
+  lane1SpeedBiasFactor: number; // 內側車道(Lane 1)相對阻力與流速偏差修正
+  laneCouplingFriction: number; // 雙車道紊流耦合阻力與跨車道剪力係數
+  laneChoiceSensitivity: number; // 車道選擇溫度/靈敏度係數
+
+  // 統計與校準輔助權重
+  kalmanNoiseRScale: number; // R scale (Baseline 1.0)
+  diurnalPeakWeight: number; // Diurnal weight (Baseline 1.0)
 
   version: number;
   lastTrainedTimestamp: string;

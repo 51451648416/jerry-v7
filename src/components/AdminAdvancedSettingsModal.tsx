@@ -63,6 +63,7 @@ import {
   getLearnedParameters,
   trainModelOnDataset,
   resetParametersToBaseline,
+  exportLearnedParametersToJson,
 } from "../estimator/modelTrainingEngine";
 import {
   LearnedModelParameters,
@@ -353,16 +354,30 @@ export default function AdminAdvancedSettingsModal({
       async () => {
         setIsTraining(true);
         setStatusNotice(null);
-        await new Promise((r) => setTimeout(r, 400));
-        const { optimizedParams } = trainModelOnDataset(dataset, 10);
-        setLearnedParams(optimizedParams);
-        setIsTraining(false);
-        showNotice(
-          `✓ 模型訓練完成！車道切換門檻已動態收斂至 ${optimizedParams.laneSwitchMarginSec.toFixed(1)} 秒。`
-        );
-        onDataChanged?.();
+        try {
+          await new Promise((r) => setTimeout(r, 400));
+          const { optimizedParams } = trainModelOnDataset(dataset, 10);
+          setLearnedParams(optimizedParams);
+          showNotice(
+            `✓ 模型訓練完成！車道切換門檻已動態收斂至 ${optimizedParams.laneSwitchMarginSec.toFixed(1)} 秒。`
+          );
+          onDataChanged?.();
+        } catch (err: any) {
+          showNotice(`✕ 訓練過程異常：${err?.message || "未知錯誤"}`, "error");
+        } finally {
+          setIsTraining(false);
+        }
       }
     );
+  };
+
+  const handleExportModelParams = () => {
+    try {
+      exportLearnedParametersToJson(learnedParams);
+      showNotice("✓ 訓練完成之機器學習模型與調整後參數已成功匯出為 JSON 檔案！");
+    } catch (err: any) {
+      showNotice(`✕ 匯出失敗：${err?.message || "未知錯誤"}`, "error");
+    }
   };
 
   const handleResetModelBaseline = () => {
@@ -1035,7 +1050,7 @@ export default function AdminAdvancedSettingsModal({
                         </>
                       ) : (
                         <div className="bg-slate-900/90 border border-slate-800 px-3 py-2 rounded-xl text-slate-400 text-xs">
-                          資料庫現有：<strong className="text-white font-bold">{dataset.length}</strong> / 500 筆
+                          資料庫現有：<strong className="text-white font-bold">{dataset.length}</strong> / 1000 筆 (達 1000 筆自動訓練並清空)
                         </div>
                       )}
                     </div>
@@ -1279,6 +1294,15 @@ export default function AdminAdvancedSettingsModal({
                             <span>手動執行 10 Epochs 微調 (限後台)</span>
                           </>
                         )}
+                      </button>
+
+                      <button
+                        onClick={handleExportModelParams}
+                        className="px-3.5 py-2 rounded-xl bg-sky-950/80 hover:bg-sky-900 text-sky-300 border border-sky-800 text-xs font-bold flex items-center gap-1.5 transition cursor-pointer"
+                        title="匯出訓練完成之機器學習模型參數與權重為 JSON 檔案"
+                      >
+                        <Download className="h-4 w-4" />
+                        <span>匯出模型 (JSON)</span>
                       </button>
 
                       <button
