@@ -359,8 +359,8 @@ export function captureDetectionToDataset(
   // 【核心功能】當資料庫達到 1,000 筆上限時，自動觸發深度模型訓練，並在訓練完成後自動清空/刪除資料庫
   if (updated.length >= MAX_DATASET_STORAGE_LIMIT) {
     try {
-      // 1. 使用達到 1000 筆的完整資料集執行 100 Epochs 深度梯度下降校準
-      const trainResult = trainModelOnDataset(updated, 100);
+      // 1. 使用達到 1000 筆的完整資料集執行 10 Epochs 梯度下降校準
+      const trainResult = trainModelOnDataset(updated, 10);
       saveLearnedParameters(trainResult.optimizedParams);
 
       // 2. 訓練完成後自動清空資料庫，重啟新的一輪循環採集，防止記憶體溢出與按鈕阻塞

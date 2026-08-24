@@ -313,7 +313,7 @@ class AutoTrainingCollectorService {
         this.addLog(
           logMsg,
           "success",
-          `100 Epochs 深度收斂完畢，已更新模型權重並清空本機資料庫暫存以確保極致效能，新輪循環從 0 筆開始累計至 1000 筆。`
+          `10 Epochs 完整收斂完畢，已清空本機資料庫暫存以確保極致效能，新輪循環從 0 筆開始累計至 1000 筆。`
         );
       } else {
         // 4. 自動在線機器學習微調 (輕量梯度下降)
