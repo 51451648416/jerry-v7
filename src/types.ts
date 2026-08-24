@@ -555,6 +555,7 @@ export interface CapturedDatasetRecord {
   congestionLevel: string;
   originToDestSummary: string;
   dataCollectTime?: string;
+  etcTravelTimeSec?: number;
   modelPredictions?: {
     rawApiSec: number;
     harmonicSec: number;
@@ -743,5 +744,26 @@ export interface LaneEstimatedState {
   dataQuality: "HIGH" | "MEDIUM" | "LOW";
   spaceMeanSpeedKmh: number;
   timeMeanSpeedKmh: number;
+}
+
+export interface TurtleCarAlert {
+  detectorId: string;
+  mileageKm: number;
+  turtleLaneId: number;
+  turtleSpeedKmh: number;
+  normalSpeedKmh: number;
+  speedDeltaKmh: number;
+}
+export interface RampMeteringState {
+  exchangeName: string;
+  direction: string;
+  status: "NORMAL" | "METERING" | "STRICT";
+  queueDelayMinutes: number; 
+}
+export interface EtcTravelTimeState {
+  startKm: number;
+  endKm: number;
+  actualTravelTimeSec: number;
+  updateTime: string;
 }
 

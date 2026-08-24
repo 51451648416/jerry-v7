@@ -158,6 +158,22 @@ function computeDiscretizedTrajectory(
   }
 
   // 提取各 VD 觀測站點的代表流速 (包含深夜 00:00~05:30 自由流防呆保護)
+  // 烏龜車 (路隊長) 偵測邏輯：遍歷所有測站，若某車道時速 <= 60 且相鄰車道 >= 75，記錄該烏龜車的所在車道與 turtleSpeedKmh
+  let turtleSpeedKmh: number | null = null;
+  if (laneIndex === 0 || laneIndex === 1) {
+    const targetLaneIdx = laneIndex;
+    const adjacentLaneIdx = laneIndex === 0 ? 1 : 0;
+    for (const d of detectors) {
+      const targetSpeed = d.lanes[targetLaneIdx]?.speedKmh ?? 0;
+      const adjacentSpeed = d.lanes[adjacentLaneIdx]?.speedKmh ?? 0;
+      if (targetSpeed > 0 && targetSpeed <= 60 && adjacentSpeed >= 75) {
+        if (turtleSpeedKmh === null || targetSpeed < turtleSpeedKmh) {
+          turtleSpeedKmh = targetSpeed;
+        }
+      }
+    }
+  }
+
   const stationPoints = detectors.map((d) => {
     let speed = 80;
     let flowPerHour = 1000;
@@ -258,9 +274,12 @@ function computeDiscretizedTrajectory(
     const midKm = (startKm + endKm) / 2;
 
     const { speed, upId, downId } = getInterpolatedSpeed(midKm);
+    const originalSegmentSpeed = speed;
+    const finalLaneSpeed = turtleSpeedKmh !== null ? Math.min(originalSegmentSpeed, turtleSpeedKmh) : originalSegmentSpeed;
+    const effectiveSpeed = Math.max(MIN_PHYSICAL_CRAWL_SPEED_KMH, finalLaneSpeed);
     
     // 微元旅行時間 ΔT_i = (Δx_i / v_i) * 3600 (保留 full precision，禁止四捨五入)
-    const segTimeSec = (SLICE_LENGTH_KM / speed) * 3600;
+    const segTimeSec = (SLICE_LENGTH_KM / effectiveSpeed) * 3600;
     cumulativeTimeSec += segTimeSec;
 
     segments.push({
@@ -270,7 +289,7 @@ function computeDiscretizedTrajectory(
       lengthKm: SLICE_LENGTH_KM, // 0.65485 km
       upstreamDetectorId: upId,
       downstreamDetectorId: downId,
-      estimatedSegmentSpeedKmh: speed, // estimated_segment_speed v_i(t_i) (full precision)
+      estimatedSegmentSpeedKmh: effectiveSpeed, // estimated_segment_speed v_i(t_i) (full precision)
       segmentTravelTimeSec: segTimeSec, // full precision
       cumulativeArrivalSec: cumulativeTimeSec, // full precision
     });

@@ -557,22 +557,25 @@ export default function TunnelGisMap({
           </div>
         </div>
 
-        {/* 右側：精簡放大/縮小/重設全景工具列 (Zoom Only, No Drag) */}
+        {/* 右側：精簡放大/縮小/重設全景工具列 (支援高倍率連續放大檢視) */}
         <div className="flex items-center gap-1.5 bg-white/95 backdrop-blur-md p-1 rounded-2xl border border-slate-200 shadow-md">
           <button
-            onClick={() => setZoomMultiplier((prev) => Math.min(2.5, prev + 0.25))}
+            onClick={() => setZoomMultiplier((prev) => Math.min(6.0, parseFloat((prev + 0.5).toFixed(2))))}
             className="p-1.5 hover:bg-slate-100 text-slate-700 rounded-xl transition cursor-pointer flex items-center justify-center"
-            title="放大視圖"
+            title="放大視圖 (可持續放大至 600%)"
           >
             <ZoomIn className="h-4 w-4" />
           </button>
           <button
-            onClick={() => setZoomMultiplier((prev) => Math.max(0.75, prev - 0.25))}
+            onClick={() => setZoomMultiplier((prev) => Math.max(0.6, parseFloat((prev - 0.5).toFixed(2))))}
             className="p-1.5 hover:bg-slate-100 text-slate-700 rounded-xl transition cursor-pointer flex items-center justify-center"
             title="縮小視圖"
           >
             <ZoomOut className="h-4 w-4" />
           </button>
+          <span className="text-[11px] font-mono text-slate-600 px-1 font-extrabold select-none">
+            {Math.round(zoomMultiplier * 100)}%
+          </span>
           <div className="h-4 w-[1px] bg-slate-200 mx-0.5" />
           <button
             onClick={() => setZoomMultiplier(1.0)}

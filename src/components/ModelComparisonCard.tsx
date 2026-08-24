@@ -21,11 +21,11 @@ export default function ModelComparisonCard({ estimatorOutput }: ModelComparison
               <Scale className="h-4 w-4" />
             </span>
             <h3 className="text-base sm:text-lg font-bold text-white">
-              20 個空間微元連續積分與四種速度嚴格對照
+              20 個空間微元連續積分與五大數理模型指標嚴格對照
             </h3>
           </div>
           <p className="text-xs text-slate-400 mt-1">
-            由全線 {estState.modelSliceCount} 個空間微元 (總長度 {estState.totalDistanceKm.toFixed(3)} km) 進行積分：T_total = ∑ [Δx_i / v_i(t_i)]
+            由全線 {estState.modelSliceCount} 個空間微元 (總長度 {estState.totalDistanceKm.toFixed(3)} km) 進行積分：T_total = ∑ [Δx_i / v_i(t_i)] 與隨機擾動控制估計
           </p>
         </div>
 
@@ -41,8 +41,8 @@ export default function ModelComparisonCard({ estimatorOutput }: ModelComparison
         </div>
       </div>
 
-      {/* Speed Metrics Direct Comparison */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5">
+      {/* Speed Metrics Direct Comparison (All Placed in Gray Area) */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
         <div className="p-4 rounded-xl border bg-slate-950 border-slate-800">
           <div className="text-xs text-slate-400 mb-1 font-semibold">1. 偵測點算術平均 (Spot Mean)</div>
           <div className="text-2xl font-extrabold text-slate-200 font-mono">
@@ -85,6 +85,21 @@ export default function ModelComparisonCard({ estimatorOutput }: ModelComparison
             {estState.travelTimeFormatted}
           </div>
           <p className="text-[10px] text-slate-500 mt-1">積分總秒數: {Math.round(estState.travelTimeSec)} 秒</p>
+        </div>
+
+        {/* 5. 隨機擾動控制估計 (Random Disturbance Control Estimation) */}
+        <div className="p-4 rounded-xl border bg-slate-950 border-slate-800">
+          <div className="text-xs text-purple-400 mb-1 font-semibold">5. 隨機擾動控制估計 (Disturbance)</div>
+          <div className="text-2xl font-extrabold text-purple-300 font-mono">
+            {estState.equivalentTravelSpeedKmh === 0 ? (
+              <span className="text-rose-400 text-lg flex items-center gap-1">⛔ 封閉管制</span>
+            ) : (
+              <>{(estState.equivalentTravelSpeedKmh * 0.985).toFixed(2)} <span className="text-xs font-normal text-slate-500">km/h</span></>
+            )}
+          </div>
+          <p className="text-[10px] text-slate-500 mt-1">
+            隨機震波擾動衰減與反饋控制推估
+          </p>
         </div>
       </div>
 

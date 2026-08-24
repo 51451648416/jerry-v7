@@ -16,7 +16,7 @@ export const BASELINE_MODEL_PARAMETERS: LearnedModelParameters = {
   diurnalPeakWeight: 1.0,
   // 隧道內車道切換與分流決策學習參數 (Tunnel Lane Switching & Allocation Dynamics)
   laneSwitchMarginSec: 18.0,
-  lane1SpeedBiasFactor: 1.02,
+  lane1SpeedBiasFactor: 1.020,
   laneCouplingFriction: 0.12,
   laneChoiceSensitivity: 0.08,
   version: 1,
@@ -69,6 +69,13 @@ export function saveLearnedParameters(params: LearnedModelParameters): void {
   } catch (e) {
     console.error("Failed to save learned parameters:", e);
   }
+}
+
+export async function pushGlobalLearnedParameters(params: LearnedModelParameters): Promise<void> {
+  saveLearnedParameters(params);
+  try {
+    await fetch("/api/model/weights", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(params) });
+  } catch (err) {}
 }
 
 /**
@@ -267,7 +274,12 @@ export function computeModelDatasetLoss(
   let validCount = 0;
 
   for (const rec of records) {
-    const actual = rec.tunnelTravelTimeSec || 600;
+    // 【ETC 空間解耦反向傳播】：扣除引道常態耗時，反求純隧道絕對真值
+    let actual = rec.tunnelTravelTimeSec || 600;
+    if (rec.etcTravelTimeSec && rec.etcTravelTimeSec > 0) {
+      const openRoadTimeSec = ((0.2 / 80) + (1.9 / 80)) * 3600; 
+      actual = Math.max(300, rec.etcTravelTimeSec - openRoadTimeSec);
+    }
     if (actual <= 0) continue;
 
     const res = predictLaneSpeedsAndSwitch(rec, params);
@@ -358,8 +370,9 @@ export function trainModelOnDataset(
   let v_coupling = 0;
   let v_sensitivity = 0;
 
-  // 若樣本量較少，使用資料增強 (Data Augmentation) 進行穩健微調
-  const trainRecords = records.length >= 5 ? records : generateAugmentedDataset(records);
+  // 若樣本量較少，直接回傳
+  if (records.length < 5) return { optimizedParams: currentParams, epochHistory: [], baselineLoss, optimizedLoss: baselineLoss };
+  const trainRecords = records;
 
   for (let epoch = 1; epoch <= numEpochs; epoch++) {
     // 數值梯度估計 (Finite Difference Numerical Gradients)
@@ -415,8 +428,8 @@ export function trainModelOnDataset(
     p.latencyDecayTauFactor = Math.max(0.7, Math.min(1.4, p.latencyDecayTauFactor - learningRate * v_tau * 0.3));
     p.diurnalPeakWeight = parseFloat((1.0 + (epoch / numEpochs) * 0.05).toFixed(3));
 
-    // 車道切換參數邊界更新
-    p.laneSwitchMarginSec = Math.max(10.0, Math.min(45.0, p.laneSwitchMarginSec - learningRate * v_switchMargin * 2.0));
+    // 車道切換參數邊界更新 (下限為 18.0)
+    p.laneSwitchMarginSec = Math.max(18.0, Math.min(45.0, p.laneSwitchMarginSec - learningRate * v_switchMargin * 2.0));
     p.lane1SpeedBiasFactor = Math.max(0.95, Math.min(1.12, p.lane1SpeedBiasFactor - learningRate * v_laneBias * 0.1));
     p.laneCouplingFriction = Math.max(0.02, Math.min(0.30, p.laneCouplingFriction - learningRate * v_coupling * 0.1));
     p.laneChoiceSensitivity = Math.max(0.02, Math.min(0.20, p.laneChoiceSensitivity - learningRate * v_sensitivity * 0.05));
@@ -459,6 +472,7 @@ export function trainModelOnDataset(
 
   saveLearnedParameters(finalParams);
   saveTrainingEpochHistory(newHistory);
+  pushGlobalLearnedParameters(finalParams);
 
   const optimizedLoss = computeModelDatasetLoss(trainRecords, finalParams);
 
@@ -468,45 +482,6 @@ export function trainModelOnDataset(
     baselineLoss,
     optimizedLoss,
   };
-}
-
-/**
- * 資料增強輔助：當實體即時庫只有少數筆時，產生符合雪隧物理流特性的合成 Ground Truth 驗證集
- */
-function generateAugmentedDataset(existingRecords: CapturedDatasetRecord[]): CapturedDatasetRecord[] {
-  const result: CapturedDatasetRecord[] = [...existingRecords];
-  const speeds = [32, 45, 58, 68, 76, 84, 88, 92];
-
-  speeds.forEach((spd, idx) => {
-    const l1 = spd - (idx % 2 === 0 ? 3 : -2);
-    const l2 = spd + (idx % 2 === 0 ? 2 : -3);
-    const actualSec = (13.097 / spd) * 3600;
-    result.push({
-      id: `aug-${idx}`,
-      timestamp: new Date(Date.now() - idx * 3600 * 1000).toISOString(),
-      timeFormatted: `歷史時段 #${idx + 1}`,
-      year: 2026,
-      month: 8,
-      day: 17,
-      dayOfWeek: "星期一",
-      isWeekend: false,
-      holidayTag: "一般日",
-      direction: idx % 2 === 0 ? "S" : "N",
-      totalDetectors: 18,
-      tunnelLane1SpeedKmh: l1,
-      tunnelLane2SpeedKmh: l2,
-      tunnelEqSpeedKmh: spd,
-      tunnelTravelTimeSec: Math.round(actualSec),
-      tunnelTravelTimeFormatted: `${Math.floor(actualSec / 60)}分${Math.round(actualSec % 60)}秒`,
-      corridor0to50TravelTimeMin: Math.round(actualSec / 60 * 3.8),
-      corridorAvgSpeedKmh: spd,
-      recommendedLane: l1 > l2 ? "內側車道 (Lane 1)" : "外側車道 (Lane 2)",
-      congestionLevel: spd < 50 ? "壅塞" : spd < 70 ? "車多" : "順暢",
-      originToDestSummary: "國道5號全線",
-    });
-  });
-
-  return result;
 }
 
 /**

@@ -15,6 +15,25 @@ async function startServer() {
     res.json({ status: "ok" });
   });
 
+  // Global in-memory storage for Model Weights
+  let globalLearnedWeights: any = null;
+
+  app.get("/api/model/weights", (req, res) => {
+    if (!globalLearnedWeights) {
+      return res.status(404).json({ error: "No global weights found" });
+    }
+    return res.json(globalLearnedWeights);
+  });
+
+  app.post("/api/model/weights", (req, res) => {
+    try {
+      globalLearnedWeights = req.body;
+      return res.json({ success: true });
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
   // TDX Key Rotation System Status
   app.get("/api/tdx/keys/status", (req, res) => {
     try {

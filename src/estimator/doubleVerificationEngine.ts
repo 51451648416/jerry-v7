@@ -78,6 +78,22 @@ export function computeAlternativeRobustTrajectory(
   }
 
   // 提取各站點有效速度
+  // 烏龜車 (路隊長) 偵測邏輯：遍歷所有測站，若某車道時速 <= 60 且相鄰車道 >= 75，記錄該烏龜車的所在車道與 turtleSpeedKmh
+  let turtleSpeedKmh: number | null = null;
+  if (laneIndex === 0 || laneIndex === 1) {
+    const targetLaneIdx = laneIndex;
+    const adjacentLaneIdx = laneIndex === 0 ? 1 : 0;
+    for (const d of detectors) {
+      const targetSpeed = d.lanes[targetLaneIdx]?.speedKmh ?? 0;
+      const adjacentSpeed = d.lanes[adjacentLaneIdx]?.speedKmh ?? 0;
+      if (targetSpeed > 0 && targetSpeed <= 60 && adjacentSpeed >= 75) {
+        if (turtleSpeedKmh === null || targetSpeed < turtleSpeedKmh) {
+          turtleSpeedKmh = targetSpeed;
+        }
+      }
+    }
+  }
+
   const validPoints = detectors
     .map((d) => {
       let speed = 80;
@@ -134,6 +150,10 @@ export function computeAlternativeRobustTrajectory(
     }
 
     segSpeed = Math.max(MIN_PHYSICAL_CRAWL_SPEED_KMH, Math.min(100, segSpeed));
+    const originalSegmentSpeed = segSpeed;
+    const finalLaneSpeed = turtleSpeedKmh !== null ? Math.min(originalSegmentSpeed, turtleSpeedKmh) : originalSegmentSpeed;
+    segSpeed = Math.max(MIN_PHYSICAL_CRAWL_SPEED_KMH, finalLaneSpeed);
+
     const segTimeSec = (SLICE_LENGTH_KM / segSpeed) * 3600;
     cumulativeTimeSec += segTimeSec;
 

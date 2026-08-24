@@ -226,3 +226,26 @@ export async function fetchDirectFreewayLiveEvents(customUrl?: string): Promise<
     return parseTdxLiveEventsJson({ LiveEvents: [] });
   }
 }
+
+export async function fetchEtcTravelTimeData(): Promise<any> {
+  const url = "https://tdx.transportdata.tw/api/basic/v2/Road/Traffic/Live/TravelTime/Freeway?$format=JSON&$filter=FreewayID eq '國道5號'";
+  try {
+    const result = await globalTdxKeyManager.executeWithFailover(url, { method: "GET", headers: { Accept: "application/json" } });
+    return result.data;
+  } catch (err) {
+    console.warn("ETC TravelTime Fetch Error:", err);
+    return null;
+  }
+}
+
+export async function fetchRampMeteringData(): Promise<any> {
+  const url = "https://tdx.transportdata.tw/api/basic/v2/Road/Traffic/Live/RampMetering/Freeway?$format=JSON&$filter=FreewayID eq '國道5號'";
+  try {
+    const result = await globalTdxKeyManager.executeWithFailover(url, { method: "GET", headers: { Accept: "application/json" } });
+    return result.data;
+  } catch (err) {
+    console.warn("Ramp Metering Fetch Error:", err);
+    return null;
+  }
+}
+

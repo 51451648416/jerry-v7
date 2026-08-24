@@ -231,6 +231,22 @@ export function estimateDelayAwareNonlinearTrajectory(
   }
 
   // 1. 建立各 VD 站的多變數狀態向量 X_d = [v, q, o, k]
+  // 烏龜車 (路隊長) 偵測邏輯：遍歷所有測站，若某車道時速 <= 60 且相鄰車道 >= 75，記錄該烏龜車的所在車道與 turtleSpeedKmh
+  let turtleSpeedKmh: number | null = null;
+  if (laneIndex === 0 || laneIndex === 1) {
+    const targetLaneIdx = laneIndex;
+    const adjacentLaneIdx = laneIndex === 0 ? 1 : 0;
+    for (const d of detectors) {
+      const targetSpeed = d.lanes[targetLaneIdx]?.speedKmh ?? 0;
+      const adjacentSpeed = d.lanes[adjacentLaneIdx]?.speedKmh ?? 0;
+      if (targetSpeed > 0 && targetSpeed <= 60 && adjacentSpeed >= 75) {
+        if (turtleSpeedKmh === null || targetSpeed < turtleSpeedKmh) {
+          turtleSpeedKmh = targetSpeed;
+        }
+      }
+    }
+  }
+
   const stationStates = detectors.map((d, dIdx) => {
     let speed = 80;
     let flowPerHour = 1000;
@@ -436,6 +452,11 @@ export function estimateDelayAwareNonlinearTrajectory(
         v_est = Math.max(MIN_PHYSICAL_CRAWL_SPEED_KMH, v_est + waveCorrectionKmh);
       }
     }
+
+    // 烏龜車 (路隊長) 排隊波傳遞限制與物理降速
+    const originalSegmentSpeed = v_est;
+    const finalLaneSpeed = turtleSpeedKmh !== null ? Math.min(originalSegmentSpeed, turtleSpeedKmh) : originalSegmentSpeed;
+    v_est = Math.max(MIN_PHYSICAL_CRAWL_SPEED_KMH, finalLaneSpeed);
 
     // 交通波傳播延遲時間 (空間傳播時間，非資料傳輸延遲)
     // tau_propagation = Δx / |w| (若有震波) 或 Δx / v

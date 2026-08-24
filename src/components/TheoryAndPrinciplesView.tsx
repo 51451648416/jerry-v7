@@ -101,7 +101,7 @@ export default function TheoryAndPrinciplesView({
             }`}
           >
             <Cpu className="h-3.5 w-3.5" />
-            <span>4 大模型流速橫向對比</span>
+            <span>5 大模型流速橫向對比</span>
           </button>
 
           <button
@@ -176,19 +176,54 @@ export default function TheoryAndPrinciplesView({
               <h4 className="text-sm font-bold text-slate-900">坡度阻力與通風井阻流補償</h4>
               <div className="space-y-2 text-xs text-slate-700">
                 <div className="flex items-start gap-2">
-                  <span className="font-bold text-indigo-600">1. 縱向坡度：</span>
+                  <span className="font-bold text-indigo-600">縱向坡度 (Grade)：</span>
                   <span>
                     南下進入雪隧前段具 +1.2% 爬坡坡度，重車在微元區段 3~7 速降顯著；北上則呈下坡與平緩段。
                   </span>
                 </div>
-                <div className="flex items-start gap-2">
-                  <span className="font-bold text-indigo-600">2. 通風三號豎井群：</span>
+
+                {/* 匝道紅綠燈秒數反推與儀控管制 (6 項時相推算 bullet points 置於坡度下方灰色區域) */}
+                <div className="bg-slate-900 text-slate-200 p-3.5 rounded-xl border border-slate-800 space-y-2 my-2 font-mono">
+                  <div className="text-[11px] font-bold text-emerald-400 font-sans flex items-center justify-between border-b border-slate-800 pb-1.5">
+                    <span>🚦 匝道紅綠燈秒數反推與儀控管制 (6 項時相推算方案)</span>
+                    <span className="text-[10px] text-slate-400 font-mono">D/D/1 排隊模型</span>
+                  </div>
+                  <div className="space-y-1.5 text-[11px]">
+                    <div className="flex items-start gap-1.5">
+                      <span className="font-bold text-emerald-400 shrink-0">1.</span>
+                      <span><strong>無儀控管制 (綠燈暢行)：</strong>放行率 &ge; 1200 VPH，紅燈 0 秒 / 綠燈常亮，平面排隊延遲 0 分鐘。</span>
+                    </div>
+                    <div className="flex items-start gap-1.5">
+                      <span className="font-bold text-emerald-400 shrink-0">2.</span>
+                      <span><strong>極輕度儀控 (寬鬆放行)：</strong>放行率 800~1199 VPH，紅燈 2~4 秒 / 綠燈 4 秒，平面排隊延遲 &le; 2 分鐘。</span>
+                    </div>
+                    <div className="flex items-start gap-1.5">
+                      <span className="font-bold text-emerald-400 shrink-0">3.</span>
+                      <span><strong>輕度常態儀控 (標準時制)：</strong>放行率 500~750 VPH，紅燈 5~8 秒 / 綠燈 2 秒，平面排隊延遲約 5 分鐘。</span>
+                    </div>
+                    <div className="flex items-start gap-1.5">
+                      <span className="font-bold text-emerald-400 shrink-0">4.</span>
+                      <span><strong>中度緊縮儀控 (一綠一車)：</strong>放行率 300~450 VPH，紅燈 10~15 秒 / 綠燈 2 秒，平面排隊延遲約 15 分鐘。</span>
+                    </div>
+                    <div className="flex items-start gap-1.5">
+                      <span className="font-bold text-emerald-400 shrink-0">5.</span>
+                      <span><strong>嚴格緊縮儀控 (長紅燈管制)：</strong>放行率 180~250 VPH，紅燈 18~25 秒 / 綠燈 2 秒，平面排隊延遲約 25 分鐘。</span>
+                    </div>
+                    <div className="flex items-start gap-1.5">
+                      <span className="font-bold text-emerald-400 shrink-0">6.</span>
+                      <span><strong>極度紫爆管制 (匝道嚴重回堵)：</strong>放行率 &lt; 180 VPH，紅燈 30 秒以上 / 綠燈 2 秒，平面排隊延遲 &ge; 30 分鐘。</span>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="flex items-start gap-2 pt-1">
+                  <span className="font-bold text-indigo-600">通風三號豎井群：</span>
                   <span>
                     通風井排風抽引氣流造成局部氣動阻力，模型在微元 11~14 注入氣壓阻力衰減係數。
                   </span>
                 </div>
                 <div className="flex items-start gap-2">
-                  <span className="font-bold text-indigo-600">3. 洞口明暗適應：</span>
+                  <span className="font-bold text-indigo-600">洞口明暗適應：</span>
                   <span>
                     南口（頭城端）與北口（坪林端）光線驟變造成的駕駛減速效應納入洞口微元抑制項。
                   </span>
