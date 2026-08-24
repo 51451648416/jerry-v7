@@ -18,6 +18,74 @@ async function startServer() {
   // Global in-memory storage for Model Weights
   let globalLearnedWeights: any = null;
 
+  // Global shared training state
+  let globalSharedModelWeights: any = null;
+  let globalSharedDatasetRecords: any[] = [];
+
+  // 模型權重共用 API
+  app.get("/api/shared/model", (req, res) => {
+    return res.json(globalSharedModelWeights || { success: false, message: "No model trained yet" });
+  });
+
+  app.post("/api/shared/model", (req, res) => {
+    try {
+      globalSharedModelWeights = req.body;
+      return res.json({ success: true, timestamp: new Date().toISOString() });
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
+  // 訓練資料集共用 API
+  app.get("/api/shared/dataset", (req, res) => {
+    return res.json(globalSharedDatasetRecords);
+  });
+
+  app.post("/api/shared/dataset", (req, res) => {
+    try {
+      if (Array.isArray(req.body)) {
+        globalSharedDatasetRecords = req.body;
+      } else {
+        globalSharedDatasetRecords.push(req.body);
+      }
+      return res.json({ success: true, total: globalSharedDatasetRecords.length });
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Global in-memory storage for TDX Keys & API Config
+  let globalSavedTdxKeys: any = null;
+  let globalSavedApiConfig: any = null;
+
+  app.get("/api/config/keys", (req, res) => {
+    if (!globalSavedTdxKeys) return res.status(404).json({ error: "No keys found" });
+    return res.json(globalSavedTdxKeys);
+  });
+
+  app.post("/api/config/keys", (req, res) => {
+    try {
+      globalSavedTdxKeys = req.body;
+      return res.json({ success: true });
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.get("/api/config/endpoint", (req, res) => {
+    if (!globalSavedApiConfig) return res.status(404).json({ error: "No api config found" });
+    return res.json(globalSavedApiConfig);
+  });
+
+  app.post("/api/config/endpoint", (req, res) => {
+    try {
+      globalSavedApiConfig = req.body;
+      return res.json({ success: true });
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
   app.get("/api/model/weights", (req, res) => {
     if (!globalLearnedWeights) {
       return res.status(404).json({ error: "No global weights found" });
