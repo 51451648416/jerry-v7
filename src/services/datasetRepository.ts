@@ -404,9 +404,9 @@ export function captureDetectionToDataset(
     } catch {}
   }
 
-  // 觸發在線自適應輕量學習更新 (使用最新 50 筆加速，避免阻塞)
+  // 觸發在線自適應學習更新 (傳入全部 updated 進行 1 個 Epoch 極速微調，兼顧全量學習與零延遲)
   try {
-    trainModelOnDataset(updated.slice(0, 50), 3);
+    trainModelOnDataset(updated, 1);
   } catch (e) {
     console.warn("Online learning step skipped:", e);
   }
@@ -556,4 +556,3 @@ export function deleteDatasetRecord(id: string): CapturedDatasetRecord[] {
   } catch (e) {}
   return updated;
 }
-
