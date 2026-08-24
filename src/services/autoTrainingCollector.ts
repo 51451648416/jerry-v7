@@ -11,7 +11,7 @@
  */
 
 import { Direction, FinalEstimatorOutput } from "../types";
-import { fetchDirectFreewayVd } from "./tdxDirectClient";
+import { fetchDirectFreewayVd, fetchEtcTravelTimeData } from "./tdxDirectClient";
 import { runVdTrafficEstimator } from "../estimator/trafficEngine";
 import { captureDetectionToDataset, getStoredDataset } from "./datasetRepository";
 import { trainModelOnDataset, getLearnedParameters } from "../estimator/modelTrainingEngine";
@@ -299,8 +299,24 @@ class AutoTrainingCollectorService {
         throw new Error("TDX 端點未回傳有效之雪山隧道車輛偵測器數據");
       }
 
+      // 同步獲取 ETC 門架旅行時間
+      let etcTravelTimeSec: number | undefined = undefined;
+      try {
+        const etcRaw = await fetchEtcTravelTimeData();
+        if (etcRaw) {
+          const list = Array.isArray(etcRaw) ? etcRaw : etcRaw.TravelTimes || etcRaw.LiveTravelTimes || [];
+          for (const item of list) {
+            const val = item.TravelTime ?? item.SectionTravelTime ?? item.ActualTravelTime;
+            if (typeof val === "number" && val > 0) {
+              etcTravelTimeSec = val;
+              break;
+            }
+          }
+        }
+      } catch {}
+
       // 3. 寫入資料庫庫存 (當達到 1,000 筆時，將自動執行 10 Epochs 深度訓練並清空資料庫)
-      const { newRecord, totalCount, autoTrainedAndCleared } = captureDetectionToDataset(output, targetDir);
+      const { newRecord, totalCount, autoTrainedAndCleared } = captureDetectionToDataset(output, targetDir, etcTravelTimeSec);
 
       this.totalCapturedInSession += 1;
       this.lastCaptureTimestamp = newRecord.timestamp;

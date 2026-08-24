@@ -27,6 +27,7 @@ import { getLearnedParameters } from "./modelTrainingEngine";
 import {
   computeAlternativeRobustTrajectory,
   executeDoubleVerificationAndRecalculation,
+  detectTurtleCars,
 } from "./doubleVerificationEngine";
 
 export const HSUEHSHAN_TUNNEL_TOTAL_LENGTH_KM = 13.097; // 嚴格定義：雪山隧道全長 13.097 km
@@ -458,6 +459,49 @@ export function runVdTrafficEstimator(
       lane2Trajectory = computeAlternativeRobustTrajectory(validatedRecords, direction, 1);
       roadTrajectory = computeAlternativeRobustTrajectory(validatedRecords, direction, -1);
     }
+  }
+
+  // 烏龜車 (路隊長) 偵測與 20 微元流速上限截斷
+  const turtleAlerts = detectTurtleCars(records);
+  const lane1Turtle = turtleAlerts.find((a) => a.turtleLaneId === 1);
+  const lane2Turtle = turtleAlerts.find((a) => a.turtleLaneId === 2);
+
+  if (lane1Turtle && lane1Trajectory && Array.isArray(lane1Trajectory.segments)) {
+    let cumTime = 0;
+    lane1Trajectory.segments = lane1Trajectory.segments.map((seg: RoadSegmentSlice) => {
+      const rawL1Speed = seg.estimatedSegmentSpeedKmh;
+      const finalL1Speed = Math.max(MIN_PHYSICAL_CRAWL_SPEED_KMH, Math.min(rawL1Speed, lane1Turtle.turtleSpeedKmh));
+      const segTime = (seg.lengthKm / finalL1Speed) * 3600;
+      cumTime += segTime;
+      return {
+        ...seg,
+        estimatedSegmentSpeedKmh: finalL1Speed,
+        segmentTravelTimeSec: segTime,
+        cumulativeArrivalSec: cumTime,
+      };
+    });
+    lane1Trajectory.totalTravelTimeSec = cumTime;
+    lane1Trajectory.equivalentTravelSpeedKmh =
+      cumTime > 0 ? lane1Trajectory.totalDistanceKm / (cumTime / 3600) : lane1Trajectory.equivalentTravelSpeedKmh;
+  }
+
+  if (lane2Turtle && lane2Trajectory && Array.isArray(lane2Trajectory.segments)) {
+    let cumTime = 0;
+    lane2Trajectory.segments = lane2Trajectory.segments.map((seg: RoadSegmentSlice) => {
+      const rawL2Speed = seg.estimatedSegmentSpeedKmh;
+      const finalL2Speed = Math.max(MIN_PHYSICAL_CRAWL_SPEED_KMH, Math.min(rawL2Speed, lane2Turtle.turtleSpeedKmh));
+      const segTime = (seg.lengthKm / finalL2Speed) * 3600;
+      cumTime += segTime;
+      return {
+        ...seg,
+        estimatedSegmentSpeedKmh: finalL2Speed,
+        segmentTravelTimeSec: segTime,
+        cumulativeArrivalSec: cumTime,
+      };
+    });
+    lane2Trajectory.totalTravelTimeSec = cumTime;
+    lane2Trajectory.equivalentTravelSpeedKmh =
+      cumTime > 0 ? lane2Trajectory.totalDistanceKm / (cumTime / 3600) : lane2Trajectory.equivalentTravelSpeedKmh;
   }
 
   // Lane 1 Speeds & Aggregations (Full precision internally)

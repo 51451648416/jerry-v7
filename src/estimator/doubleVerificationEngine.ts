@@ -16,6 +16,7 @@ import {
   RoadSegmentSlice,
   DoubleVerificationState,
   ApiDirectVdTelemetry,
+  TurtleCarAlert,
 } from "../types";
 import {
   HSUEHSHAN_TUNNEL_TOTAL_LENGTH_KM,
@@ -26,6 +27,41 @@ import {
 
 export const EXTREME_TRIGGER_THRESHOLD_KMH = 23.0; // 兩車道速差超過 23 km/h 觸發二次重算
 export const EXTREME_DETERMINED_THRESHOLD_KMH = 23.0; // 重算後速差仍超過 23 km/h 判定為極端情況，直接顯示並展示 API 原始數據
+
+/**
+ * 烏龜車 (路隊長) 偵測函式
+ * 判定標準：某車道時速 <= 60 km/h 且相鄰車道時速 >= 75 km/h (或速差顯著)
+ */
+export function detectTurtleCars(detectors: RawApiDetectorRecord[]): TurtleCarAlert[] {
+  const alerts: TurtleCarAlert[] = [];
+  for (const d of detectors) {
+    const l1Speed = d.lanes[0]?.speedKmh ?? 0;
+    const l2Speed = d.lanes[1]?.speedKmh ?? 0;
+
+    if (l1Speed > 0 && l2Speed > 0) {
+      if (l1Speed <= 60 && l2Speed >= 75) {
+        alerts.push({
+          detectorId: d.detectorId,
+          mileageKm: d.mileageKm,
+          turtleLaneId: 1,
+          turtleSpeedKmh: l1Speed,
+          normalSpeedKmh: l2Speed,
+          speedDeltaKmh: l2Speed - l1Speed,
+        });
+      } else if (l2Speed <= 60 && l1Speed >= 75) {
+        alerts.push({
+          detectorId: d.detectorId,
+          mileageKm: d.mileageKm,
+          turtleLaneId: 2,
+          turtleSpeedKmh: l2Speed,
+          normalSpeedKmh: l1Speed,
+          speedDeltaKmh: l1Speed - l2Speed,
+        });
+      }
+    }
+  }
+  return alerts;
+}
 
 /**
  * 備援替代演算法 (Alternative Robust Method):

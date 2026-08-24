@@ -256,7 +256,8 @@ export function getStoredDataset(): CapturedDatasetRecord[] {
  */
 export function captureDetectionToDataset(
   output: FinalEstimatorOutput,
-  direction: Direction
+  direction: Direction,
+  etcTravelTimeSec?: number
 ): { newRecord: CapturedDatasetRecord; totalCount: number; autoTrainedAndCleared?: boolean } {
   const currentDataset = getStoredDataset();
   const now = new Date();
@@ -327,6 +328,7 @@ export function captureDetectionToDataset(
     tunnelEqSpeedKmh: parseFloat(state.equivalentTravelSpeedKmh.toFixed(1)),
     tunnelTravelTimeSec: actualSec,
     tunnelTravelTimeFormatted: state.travelTimeFormatted,
+    etcTravelTimeSec: typeof etcTravelTimeSec === "number" && etcTravelTimeSec > 0 ? etcTravelTimeSec : undefined,
 
     // 國道5號全線走廊段 (0K ~ 54K)
     corridorRange: direction === "S" ? "0K-54K (南港系統 ↔ 蘇澳端)" : "0K-54K (蘇澳端 ↔ 南港系統)",

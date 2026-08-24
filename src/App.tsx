@@ -30,7 +30,7 @@ import AdminAdvancedSettingsModal from "./components/AdminAdvancedSettingsModal"
 import GlobalSearchModal, { SearchResultItem } from "./components/GlobalSearchModal";
 import TwoMinuteStalePrompt from "./components/TwoMinuteStalePrompt";
 import { getResolvedApiUrl, getResolvedApiHeaders } from "./services/apiConfig";
-import { fetchDirectFreewayVd } from "./services/tdxDirectClient";
+import { fetchDirectFreewayVd, fetchEtcTravelTimeData } from "./services/tdxDirectClient";
 
 import TrafficRefreshControl, {
   getRemainingCooldownSec,
@@ -345,8 +345,26 @@ export default function App() {
         throw new Error("官方 TDX 伺服器目前未回傳雪山隧道車輛偵測器數據");
       }
 
-      // Automatically incorporate detection data into dataset on each analysis
-      const { totalCount } = captureDetectionToDataset(output, targetDir);
+      // 同步獲取 ETC 門架旅行時間 (真值)，啟動空間解耦反向傳播
+      let etcTravelTimeSec: number | undefined = undefined;
+      try {
+        const etcRaw = await fetchEtcTravelTimeData();
+        if (etcRaw) {
+          const list = Array.isArray(etcRaw) ? etcRaw : etcRaw.TravelTimes || etcRaw.LiveTravelTimes || [];
+          for (const item of list) {
+            const val = item.TravelTime ?? item.SectionTravelTime ?? item.ActualTravelTime;
+            if (typeof val === "number" && val > 0) {
+              etcTravelTimeSec = val;
+              break;
+            }
+          }
+        }
+      } catch (etcErr) {
+        console.warn("ETC TravelTime Sync Notice:", etcErr);
+      }
+
+      // Automatically incorporate detection data into dataset on each analysis with ETC ground truth
+      const { totalCount } = captureDetectionToDataset(output, targetDir, etcTravelTimeSec);
 
       // Record visitor trajectory snapshot for 3-hour trend rolling window
       recordVisitorTrafficTrajectory(output);
