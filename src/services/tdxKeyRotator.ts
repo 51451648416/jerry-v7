@@ -326,6 +326,18 @@ export class TdxKeyRotationSystem {
     const builtInDefaults = [
       {
         id: "key-builtin-primary",
+        clientId: "lovefiy0903-f8d75808-3306-4327",
+        clientSecret: "3b2a8558-8fb3-43ec-ada7-14f59e3476b4",
+        label: "TDX 系統預設金鑰 #1",
+      },
+      {
+        id: "key-builtin-secondary",
+        clientId: "ghjh308music-2e90f58f-64df-4f6b",
+        clientSecret: "ghjh308music-2e90f58f-64df-4f6b",
+        label: "TDX 系統預設金鑰 #2",
+      },
+      {
+        id: "key-builtin-backup",
         clientId: "jerry0903-d82c8d89-56b2-4628",
         clientSecret: "5fdae95b-b2d6-4b80-a153-2238d6e74db5",
         label: "TDX 系統備援金鑰",
@@ -370,6 +382,18 @@ export class TdxKeyRotationSystem {
     const builtInDefaults = [
       {
         id: "key-builtin-primary",
+        clientId: "lovefiy0903-f8d75808-3306-4327",
+        clientSecret: "3b2a8558-8fb3-43ec-ada7-14f59e3476b4",
+        label: "TDX 系統預設金鑰 #1",
+      },
+      {
+        id: "key-builtin-secondary",
+        clientId: "ghjh308music-2e90f58f-64df-4f6b",
+        clientSecret: "ghjh308music-2e90f58f-64df-4f6b",
+        label: "TDX 系統預設金鑰 #2",
+      },
+      {
+        id: "key-builtin-backup",
         clientId: "jerry0903-d82c8d89-56b2-4628",
         clientSecret: "5fdae95b-b2d6-4b80-a153-2238d6e74db5",
         label: "TDX 系統備援金鑰",
