@@ -57,7 +57,7 @@ export function getApiConfig(): ApiEndpointConfig {
 }
 
 /**
- * 儲存 API 端點與命名配置
+ * 儲存 API 端點與命名配置，並全域同步至後端伺服器
  */
 export function saveApiConfig(config: Partial<ApiEndpointConfig>): ApiEndpointConfig {
   const current = getApiConfig();
@@ -65,16 +65,69 @@ export function saveApiConfig(config: Partial<ApiEndpointConfig>): ApiEndpointCo
     ...current,
     ...config,
   };
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
+  } catch (e) {
+    console.warn("Failed to write API config to localStorage:", e);
+  }
+
+  // 非同步向後端進行全域廣播與持久化同步
+  if (typeof fetch !== "undefined") {
+    fetch("/api/config/endpoint", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(updated),
+    }).catch((err) => {
+      console.warn("無法同步 API 配置至後端伺服器:", err);
+    });
+  }
+
   return updated;
 }
 
 /**
- * 重設為預設 API 配置
+ * 重設為預設 API 配置，並全域同步至後端伺服器
  */
 export function resetApiConfig(): ApiEndpointConfig {
-  localStorage.removeItem(STORAGE_KEY);
-  return { ...DEFAULT_API_CONFIG };
+  try {
+    localStorage.removeItem(STORAGE_KEY);
+  } catch (e) {}
+
+  const def = { ...DEFAULT_API_CONFIG };
+  if (typeof fetch !== "undefined") {
+    fetch("/api/config/endpoint", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(def),
+    }).catch(() => {});
+  }
+  return def;
+}
+
+/**
+ * 從後端伺服器同步最新的全域 API 儲存與路由配置 (跨端點/跨裝置同步)
+ */
+export async function syncApiConfigFromServer(): Promise<ApiEndpointConfig | null> {
+  if (typeof fetch === "undefined") return null;
+  try {
+    const res = await fetch("/api/config/endpoint");
+    if (res.ok) {
+      const serverConfig = await res.json();
+      if (serverConfig && typeof serverConfig === "object" && !serverConfig.error) {
+        const merged: ApiEndpointConfig = {
+          ...DEFAULT_API_CONFIG,
+          ...serverConfig,
+        };
+        try {
+          localStorage.setItem(STORAGE_KEY, JSON.stringify(merged));
+        } catch (e) {}
+        return merged;
+      }
+    }
+  } catch (err) {
+    // 後端尚未配置或處於離線狀態
+  }
+  return null;
 }
 
 /**

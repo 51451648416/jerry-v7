@@ -29,9 +29,11 @@ import BackendAuthModal from "./components/BackendAuthModal";
 import AdminAdvancedSettingsModal from "./components/AdminAdvancedSettingsModal";
 import GlobalSearchModal, { SearchResultItem } from "./components/GlobalSearchModal";
 import TwoMinuteStalePrompt from "./components/TwoMinuteStalePrompt";
-import { getResolvedApiUrl, getResolvedApiHeaders } from "./services/apiConfig";
+import { getResolvedApiUrl, getResolvedApiHeaders, syncApiConfigFromServer } from "./services/apiConfig";
 import { fetchDirectFreewayVd, fetchEtcTravelTimeData } from "./services/tdxDirectClient";
-
+import { syncTdxKeysFromServer } from "./services/tdxKeyRotator";
+import { syncDatasetFromServer, captureDetectionToDataset } from "./services/datasetRepository";
+import { syncLearnedParametersFromServer } from "./estimator/modelTrainingEngine";
 import TrafficRefreshControl, {
   getRemainingCooldownSec,
   getNextCooldownDuration,
@@ -41,7 +43,6 @@ import TrafficRefreshControl, {
 } from "./components/TrafficRefreshControl";
 import { Direction, FinalEstimatorOutput, VehicleTransitMode } from "./types";
 import { runVdTrafficEstimator } from "./estimator/trafficEngine";
-import { captureDetectionToDataset } from "./services/datasetRepository";
 import { isAdminAuthenticated, subscribeAdminAuth } from "./services/adminAuth";
 import { recordVisitorSession } from "./services/visitorStats";
 import { recordVisitorTrafficTrajectory } from "./services/recentVisitorTrajectoryRepository";
@@ -122,9 +123,16 @@ export default function App() {
     elapsedSinceLastFetch >= STALE_DATA_TIMEOUT_SECONDS &&
     elapsedSinceLastFetch < FORTY_MINUTES_TIMEOUT_SECONDS;
 
-  // Restore analysis state & cached output from localStorage on initial mount
+  // Restore analysis state & cached output from localStorage on initial mount and sync from server
   useEffect(() => {
     recordVisitorSession();
+
+    // 跨後端/跨裝置全域設定與資料集自動背景同步 (Multi-Backend Automatic Synchronization)
+    syncApiConfigFromServer().catch(() => {});
+    syncTdxKeysFromServer().catch(() => {});
+    syncDatasetFromServer().catch(() => {});
+    syncLearnedParametersFromServer().catch(() => {});
+
     try {
       const elapsed = computeElapsedSeconds();
       const hasLastFetch = Boolean(localStorage.getItem(STORAGE_LAST_FETCH_TIME_KEY));

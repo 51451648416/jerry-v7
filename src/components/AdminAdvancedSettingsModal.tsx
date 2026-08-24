@@ -58,12 +58,14 @@ import {
   clearAllDataset,
   exportDatasetToCsv,
   deleteDatasetRecord,
+  syncDatasetFromServer,
 } from "../services/datasetRepository";
 import {
   getLearnedParameters,
   trainModelOnDataset,
   resetParametersToBaseline,
   exportLearnedParametersToJson,
+  syncLearnedParametersFromServer,
 } from "../estimator/modelTrainingEngine";
 import {
   LearnedModelParameters,
@@ -83,6 +85,7 @@ import {
   ApiEndpointConfig,
   DEFAULT_API_CONFIG,
   getResolvedApiUrl,
+  syncApiConfigFromServer,
 } from "../services/apiConfig";
 import {
   globalTdxKeyManager,
@@ -92,6 +95,7 @@ import {
   CustomTdxKeyInput,
   TdxKeyManagerStatus,
   STORAGE_KEY_TDX_API_KEYS,
+  syncTdxKeysFromServer,
 } from "../services/tdxKeyRotator";
 import {
   getVisitorStats,
@@ -176,7 +180,7 @@ export default function AdminAdvancedSettingsModal({
     autoCollectorState.config.autoTrainAfterCapture !== false
   );
 
-  const reloadData = () => {
+  const reloadData = async () => {
     setIsAuth(isAdminAuthenticated());
     setDataset(getStoredDataset());
     setLearnedParams(getLearnedParameters());
@@ -199,6 +203,32 @@ export default function AdminAdvancedSettingsModal({
     setApiConfig(getApiConfig());
     setTestApiResult(null);
     setAutoCollectorState(globalAutoTrainingCollector.getState());
+
+    // 全域後端持久化狀態同步 (Multi-Backend / Multi-Device Sync)
+    try {
+      const [syncedConfig, syncedKeys, syncedDs, syncedParams] = await Promise.allSettled([
+        syncApiConfigFromServer(),
+        syncTdxKeysFromServer(),
+        syncDatasetFromServer(),
+        syncLearnedParametersFromServer(),
+      ]);
+
+      if (syncedConfig.status === "fulfilled" && syncedConfig.value) {
+        setApiConfig(syncedConfig.value);
+      }
+      if (syncedKeys.status === "fulfilled" && syncedKeys.value && syncedKeys.value.length > 0) {
+        setKeyPairs(syncedKeys.value);
+      }
+      if (syncedDs.status === "fulfilled" && syncedDs.value) {
+        setDataset(syncedDs.value);
+      }
+      if (syncedParams.status === "fulfilled" && syncedParams.value) {
+        setLearnedParams(syncedParams.value);
+      }
+      setTdxStatus(globalTdxKeyManager.getStatus());
+    } catch (err) {
+      console.warn("後台全域同步提示:", err);
+    }
   };
 
   useEffect(() => {

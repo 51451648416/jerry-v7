@@ -66,6 +66,10 @@ async function startServer() {
   app.post("/api/config/keys", (req, res) => {
     try {
       globalSavedTdxKeys = req.body;
+      const keysArray = Array.isArray(req.body) ? req.body : req.body?.keys;
+      if (Array.isArray(keysArray)) {
+        globalTdxKeyManager.setCustomKeys(keysArray);
+      }
       return res.json({ success: true });
     } catch (err: any) {
       return res.status(500).json({ error: err.message });

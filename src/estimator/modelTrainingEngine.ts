@@ -61,14 +61,47 @@ export function getLearnedParameters(): LearnedModelParameters {
 }
 
 /**
- * 儲存學習更新後的最佳模型參數
+ * 儲存學習更新後的最佳模型參數，並同步至後端伺服器
  */
 export function saveLearnedParameters(params: LearnedModelParameters): void {
   try {
     localStorage.setItem(STORAGE_KEY_LEARNED_PARAMS, JSON.stringify(params));
+    if (typeof fetch !== "undefined") {
+      fetch("/api/shared/model", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(params),
+      }).catch(() => {});
+      fetch("/api/model/weights", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(params),
+      }).catch(() => {});
+    }
   } catch (e) {
     console.error("Failed to save learned parameters:", e);
   }
+}
+
+/**
+ * 從後端伺服器同步全域模型權重 (跨後端/跨裝置同步)
+ */
+export async function syncLearnedParametersFromServer(): Promise<LearnedModelParameters | null> {
+  if (typeof fetch === "undefined") return null;
+  try {
+    const res = await fetch("/api/shared/model");
+    if (res.ok) {
+      const data = await res.json();
+      if (data && typeof data === "object" && data.version && !data.error) {
+        const merged: LearnedModelParameters = { ...BASELINE_MODEL_PARAMETERS, ...data };
+        try {
+          localStorage.setItem(STORAGE_KEY_LEARNED_PARAMS, JSON.stringify(merged));
+        } catch (e) {}
+        return merged;
+      }
+    }
+  } catch (e) {}
+  return null;
 }
 
 export async function pushGlobalLearnedParameters(params: LearnedModelParameters): Promise<void> {

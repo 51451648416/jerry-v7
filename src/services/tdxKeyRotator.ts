@@ -134,10 +134,43 @@ export function saveStoredTdxKeyPairs(pairs: CustomTdxKeyInput[]): void {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ keys: cleaned }),
       }).catch(() => {});
+
+      fetch("/api/config/keys", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(cleaned),
+      }).catch(() => {});
     }
   } catch (e) {
     console.error("儲存 TDX_API_KEYS 失敗:", e);
   }
+}
+
+/**
+ * 從後端伺服器同步全域 TDX 金鑰 (跨後端/跨裝置同步)
+ */
+export async function syncTdxKeysFromServer(): Promise<CustomTdxKeyInput[] | null> {
+  if (typeof fetch === "undefined") return null;
+  try {
+    const res = await fetch("/api/config/keys");
+    if (res.ok) {
+      const data = await res.json();
+      const keysArray = Array.isArray(data) ? data : data?.keys;
+      if (Array.isArray(keysArray) && keysArray.length > 0) {
+        localStorage.setItem(STORAGE_KEY_TDX_API_KEYS, JSON.stringify(keysArray));
+        const firstEnabled = keysArray.find((p: any) => p.isEnabled && p.clientId && p.clientSecret);
+        if (firstEnabled) {
+          localStorage.setItem("TDX_CLIENT_ID", firstEnabled.clientId);
+          localStorage.setItem("TDX_CLIENT_SECRET", firstEnabled.clientSecret);
+        }
+        globalTdxKeyManager.reloadKeys();
+        return keysArray;
+      }
+    }
+  } catch (e) {
+    // Backend offline or not set
+  }
+  return null;
 }
 
 /**

@@ -368,6 +368,16 @@ export function captureDetectionToDataset(
       localStorage.removeItem(LOCAL_STORAGE_DATASET_KEY);
     }
   }
+
+  // 同步推送至全域後端持久化 API
+  if (typeof fetch !== "undefined") {
+    fetch("/api/shared/dataset", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(newRecord),
+    }).catch(() => {});
+  }
+
   // 觸發在線學習 (全量 updated 執行 1 個 Epoch，杜絕 CPU 凍結)
   try {
     trainModelOnDataset(updated, 1);
@@ -375,6 +385,37 @@ export function captureDetectionToDataset(
     console.warn("Online learning step skipped:", e);
   }
   return { newRecord, totalCount: updated.length, autoTrainedAndCleared: false };
+}
+
+/**
+ * 從後端伺服器同步全域資料集 (跨後端/跨裝置同步)
+ */
+export async function syncDatasetFromServer(): Promise<CapturedDatasetRecord[] | null> {
+  if (typeof fetch === "undefined") return null;
+  try {
+    const res = await fetch("/api/shared/dataset");
+    if (res.ok) {
+      const records = await res.json();
+      if (Array.isArray(records) && records.length > 0) {
+        const current = getStoredDataset();
+        const map = new Map<string, CapturedDatasetRecord>();
+        for (const r of current) map.set(r.id, r);
+        for (const r of records) {
+          if (r && r.id) map.set(r.id, r);
+        }
+        const merged = Array.from(map.values())
+          .sort((a, b) => (b.unixTimestampMs || 0) - (a.unixTimestampMs || 0))
+          .slice(0, MAX_DATASET_STORAGE_LIMIT);
+        try {
+          localStorage.setItem(LOCAL_STORAGE_DATASET_KEY, JSON.stringify(merged));
+        } catch (e) {}
+        return merged;
+      }
+    }
+  } catch (e) {
+    // Backend offline or error
+  }
+  return null;
 }
 
 /**
