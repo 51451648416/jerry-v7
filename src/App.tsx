@@ -707,7 +707,7 @@ export default function App() {
           </div>
         )}
 
-        {/* TAB 4: 國5北向 匝道儀控與主線號誌管制 (Ramp Metering & Traffic Lights - 取代原本數理模型位置) */}
+        {/* TAB: 國5北向 匝道儀控與號誌管制 */}
         {(activeTab === "metering" || activeTab === "theory") && (
           <div className="space-y-5">
             {isStaleOverTwoMinutes && (
@@ -726,6 +726,7 @@ export default function App() {
             />
           </div>
         )}
+
 
         {/* 備用 / 資料庫管理 (已整併至後台管理系統) */}
         {activeTab === "dataset" && (

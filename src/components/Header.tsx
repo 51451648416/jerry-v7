@@ -16,6 +16,7 @@ import {
   Route,
   ChevronDown,
   Radio,
+  ShieldAlert,
 } from "lucide-react";
 import { VehicleTransitMode } from "../types";
 import Logo from "./Logo";
@@ -360,7 +361,7 @@ export default function Header({
                 <span>出發時間試算</span>
               </button>
 
-              {/* Tab 4: 匝道儀控與號誌控管 (取代原本數理模型位置) */}
+              {/* Tab 4: 匝道儀控與號誌控管 */}
               <button
                 onClick={() => onTabChange("metering")}
                 className={`px-3 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1.5 cursor-pointer whitespace-nowrap ${
@@ -372,6 +373,7 @@ export default function Header({
                 <Radio className="h-3.5 w-3.5 text-emerald-600 shrink-0" />
                 <span>匝道儀控</span>
               </button>
+
 
               {/* Tab 5: CCTV 監視器 */}
               <button
@@ -461,7 +463,7 @@ export default function Header({
             <span className="text-[10px] mt-0.5 whitespace-nowrap">出發試算</span>
           </button>
 
-          {/* 4. 匝道儀控 (取代原本數理模型位置) */}
+          {/* 4. 匝道儀控 */}
           <button
             onClick={() => onTabChange("metering")}
             className={`flex flex-col items-center justify-center py-1 px-0.5 rounded-xl transition cursor-pointer ${

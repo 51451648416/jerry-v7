@@ -158,47 +158,74 @@ export default function RampMeterPulseMeter({
   const [selectedExchangeName, setSelectedExchangeName] = useState<string>("頭城匝道");
   const [showTheoryModal, setShowTheoryModal] = useState<boolean>(false);
 
-  // 當前選取的交流道儀控時相資料
-  const currentRamp: SignalTimingResult =
-    meteringState?.rampSignals?.find((r) => r.exchangeName === selectedExchangeName) ||
-    meteringState?.rampSignals?.[0] || {
-      exchangeName: "頭城匝道",
-      isMetered: true,
-      cycleSec: 6,
-      greenSec: 2,
-      redSec: 3,
-      vph: 600,
-      queueDelayMinutes: 8,
-      intensity: "MODERATE",
-      intensityLabel: "常態調控 (黃)",
-      intensityColorClass: "text-amber-400 bg-amber-950/60 border-amber-500/40",
-      pulseIntervalSec: 6.0,
-      description: "放行間隔 6秒 (紅燈 3s / 綠燈 2s)",
-      upstreamQueueLengthMeters: 520,
-    };
-
-  // 當前選取交流道的三重耗時結構
-  const currentThreeTier: ThreeTierTravelTimeResult =
-    meteringState?.threeTierTimes?.[selectedExchangeName] || {
-      originExchangeName: selectedExchangeName,
-      rampQueueDelayMin: currentRamp?.queueDelayMinutes || 0,
-      mainlineQueueDelayMin: meteringState?.mainlineSignal?.mainlineQueueDelayMin || 0,
-      tunnelTravelTimeMin: meteringState?.tunnelTravelTimeMin || 11,
-      totalTravelTimeMin:
-        (currentRamp?.queueDelayMinutes || 0) +
-        (meteringState?.mainlineSignal?.mainlineQueueDelayMin || 0) +
-        (meteringState?.tunnelTravelTimeMin || 11),
-      totalTravelTimeFormatted: `${
-        (currentRamp?.queueDelayMinutes || 0) +
-        (meteringState?.mainlineSignal?.mainlineQueueDelayMin || 0) +
-        (meteringState?.tunnelTravelTimeMin || 11)
-      } 分鐘`,
-      detourAdvice: "目前排隊時間在合理範圍，建議維持行駛國道 5 號。",
-      shouldTakeAlternativeRoute: false,
-      suggestedAlternativeRoute: "國道 5 號主線",
-    };
-
   const mainlineSignal = meteringState?.mainlineSignal;
+  const isMainlineSelected = selectedExchangeName === "主線";
+
+  // 當前選取的交流道或主線儀控時相資料
+  const currentRamp: SignalTimingResult = isMainlineSelected
+    ? {
+        exchangeName: "頭城 30.5K 主線號誌",
+        isMetered: mainlineSignal?.isMainlineMeterActive ?? true,
+        cycleSec: mainlineSignal?.cycleSec || 35,
+        greenSec: mainlineSignal?.greenSec || 15,
+        redSec: (mainlineSignal?.cycleSec || 35) - (mainlineSignal?.greenSec || 15) - 2,
+        vph: 1800,
+        queueDelayMinutes: mainlineSignal?.mainlineQueueDelayMin || 3,
+        intensity: mainlineSignal?.intensity || "MODERATE",
+        intensityLabel: mainlineSignal?.intensityLabel || "主線儀控中 (黃)",
+        intensityColorClass: "text-amber-400 bg-amber-950/60 border-amber-500/40",
+        pulseIntervalSec: mainlineSignal?.cycleSec || 35,
+        description: "主線紅綠燈管制 (頭城 30.5K)",
+        upstreamQueueLengthMeters: 350,
+      }
+    : (meteringState?.rampSignals?.find((r) => r.exchangeName === selectedExchangeName) ||
+        meteringState?.rampSignals?.[0] || {
+          exchangeName: "頭城匝道",
+          isMetered: true,
+          cycleSec: 6,
+          greenSec: 2,
+          redSec: 3,
+          vph: 600,
+          queueDelayMinutes: 8,
+          intensity: "MODERATE",
+          intensityLabel: "常態調控 (黃)",
+          intensityColorClass: "text-amber-400 bg-amber-950/60 border-amber-500/40",
+          pulseIntervalSec: 6.0,
+          description: "放行間隔 6秒 (紅燈 3s / 綠燈 2s)",
+          upstreamQueueLengthMeters: 520,
+        });
+
+  // 當前選取交流道或主線的三重耗時結構
+  const currentThreeTier: ThreeTierTravelTimeResult = isMainlineSelected
+    ? {
+        originExchangeName: "頭城 30.5K 主線",
+        rampQueueDelayMin: 0,
+        mainlineQueueDelayMin: mainlineSignal?.mainlineQueueDelayMin || 3,
+        tunnelTravelTimeMin: meteringState?.tunnelTravelTimeMin || 11,
+        totalTravelTimeMin: (mainlineSignal?.mainlineQueueDelayMin || 3) + (meteringState?.tunnelTravelTimeMin || 11),
+        totalTravelTimeFormatted: `${(mainlineSignal?.mainlineQueueDelayMin || 3) + (meteringState?.tunnelTravelTimeMin || 11)} 分鐘`,
+        detourAdvice: "目前行駛主線 30.5K 號誌管制點，建議配合號誌燈號循序通過。",
+        shouldTakeAlternativeRoute: false,
+        suggestedAlternativeRoute: "國道 5 號主線",
+      }
+    : (meteringState?.threeTierTimes?.[selectedExchangeName] || {
+        originExchangeName: selectedExchangeName,
+        rampQueueDelayMin: currentRamp?.queueDelayMinutes || 0,
+        mainlineQueueDelayMin: meteringState?.mainlineSignal?.mainlineQueueDelayMin || 0,
+        tunnelTravelTimeMin: meteringState?.tunnelTravelTimeMin || 11,
+        totalTravelTimeMin:
+          (currentRamp?.queueDelayMinutes || 0) +
+          (meteringState?.mainlineSignal?.mainlineQueueDelayMin || 0) +
+          (meteringState?.tunnelTravelTimeMin || 11),
+        totalTravelTimeFormatted: `${
+          (currentRamp?.queueDelayMinutes || 0) +
+          (meteringState?.mainlineSignal?.mainlineQueueDelayMin || 0) +
+          (meteringState?.tunnelTravelTimeMin || 11)
+        } 分鐘`,
+        detourAdvice: "目前排隊時間在合理範圍，建議維持行駛國道 5 號。",
+        shouldTakeAlternativeRoute: false,
+        suggestedAlternativeRoute: "國道 5 號主線",
+      });
 
   // 擬真即時紅綠燈秒數計時器 (秒級即時倒數切換)
   const [rampTimerSec, setRampTimerSec] = useState<number>(0);
@@ -368,6 +395,22 @@ export default function RampMeterPulseMeter({
             </button>
           );
         })}
+
+        {/* 新增「主線」選項按鈕 */}
+        <button
+          onClick={() => setSelectedExchangeName("主線")}
+          className={`px-3.5 py-2 rounded-2xl text-xs font-bold transition-all duration-200 cursor-pointer flex items-center gap-2 border ${
+            selectedExchangeName === "主線"
+              ? "bg-slate-800 text-white border-cyan-500 shadow-md shadow-cyan-950/60"
+              : "bg-slate-950/60 text-slate-400 border-slate-800/80 hover:text-slate-200 hover:border-slate-700"
+          }`}
+        >
+          <span className={`w-2 h-2 rounded-full ${mainlineBadge.dot}`} />
+          <span>主線 (30.5K)</span>
+          <span className="text-[10px] opacity-80 font-mono bg-slate-900 px-1.5 py-0.5 rounded border border-slate-700">
+            {mainlineSignal?.cycleSec || 35}s
+          </span>
+        </button>
       </div>
 
       {/* 主體區塊：分為「匝道實體紅綠燈」與「頭城 30.5K 主線號誌實體紅綠燈」 */}
