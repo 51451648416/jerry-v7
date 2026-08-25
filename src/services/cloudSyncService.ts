@@ -14,6 +14,41 @@ export interface CloudSyncState {
   isSyncing: boolean; // 同步中狀態
   syncStatusText: string; // 狀態文字
   redisMode: "upstash_redis_cloud" | "local_memory_fallback" | "offline";
+  syncCooldown: number; // 手動同步冷卻秒數 (每 50 秒才能按一次)
+}
+
+const MANUAL_SYNC_COOLDOWN_SEC = 50;
+let lastManualSyncTimestamp = 0;
+let cooldownTickerTimer: ReturnType<typeof setInterval> | null = null;
+
+export function getRemainingSyncCooldown(): number {
+  if (!lastManualSyncTimestamp) return 0;
+  const elapsed = Math.floor((Date.now() - lastManualSyncTimestamp) / 1000);
+  return Math.max(0, MANUAL_SYNC_COOLDOWN_SEC - elapsed);
+}
+
+function startCooldownTicker() {
+  if (cooldownTickerTimer) {
+    clearInterval(cooldownTickerTimer);
+    cooldownTickerTimer = null;
+  }
+
+  const update = () => {
+    const remaining = getRemainingSyncCooldown();
+    if (globalSyncState.syncCooldown !== remaining) {
+      globalSyncState.syncCooldown = remaining;
+      notifyListeners();
+    }
+    if (remaining <= 0) {
+      if (cooldownTickerTimer) {
+        clearInterval(cooldownTickerTimer);
+        cooldownTickerTimer = null;
+      }
+    }
+  };
+
+  update();
+  cooldownTickerTimer = setInterval(update, 1000);
 }
 
 let globalSyncState: CloudSyncState = {
@@ -26,6 +61,7 @@ let globalSyncState: CloudSyncState = {
   isSyncing: false,
   syncStatusText: "尚未進行雲端同步",
   redisMode: "offline",
+  syncCooldown: 0,
 };
 
 const listeners = new Set<(state: CloudSyncState) => void>();
@@ -107,6 +143,7 @@ export async function performBidirectionalCloudSync(): Promise<CloudSyncState> {
       isSyncing: false,
       syncStatusText: statusText,
       redisMode,
+      syncCooldown: getRemainingSyncCooldown(),
     };
 
     // 發送全域自訂廣播事件通知 React 各頁面與元件更新
@@ -147,6 +184,12 @@ export function useCloudSyncStatus() {
   }, []);
 
   const triggerManualSync = useCallback(async () => {
+    const remaining = getRemainingSyncCooldown();
+    if (remaining > 0 || globalSyncState.isSyncing) {
+      return { ...globalSyncState, syncCooldown: remaining };
+    }
+    lastManualSyncTimestamp = Date.now();
+    startCooldownTicker();
     return await performBidirectionalCloudSync();
   }, []);
 

@@ -31,6 +31,7 @@ export default function SystemStatusFooter() {
     isSyncing,
     syncStatusText,
     redisMode,
+    syncCooldown,
     triggerManualSync,
   } = useCloudSyncStatus();
 
@@ -107,18 +108,28 @@ export default function SystemStatusFooter() {
             )}
             <button
               onClick={handleManualSyncClick}
-              disabled={isSyncing}
-              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 cursor-pointer shadow-2xs ${
-                isSyncing
-                  ? "bg-slate-200 text-slate-500 cursor-not-allowed"
+              disabled={isSyncing || (syncCooldown > 0)}
+              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 shadow-2xs ${
+                isSyncing || syncCooldown > 0
+                  ? "bg-slate-200 text-slate-500 cursor-not-allowed border border-slate-300"
                   : isCloudConnected
-                  ? "bg-emerald-600 hover:bg-emerald-700 text-white"
-                  : "bg-amber-600 hover:bg-amber-700 text-white"
+                  ? "bg-emerald-600 hover:bg-emerald-700 text-white cursor-pointer"
+                  : "bg-amber-600 hover:bg-amber-700 text-white cursor-pointer"
               }`}
-              title="強制自 Upstash 雲端拉取最新金鑰、模型參數與訓練資料集並全域更新"
+              title={
+                syncCooldown > 0
+                  ? `手動同步冷卻中，請等待 ${syncCooldown} 秒後再次同步`
+                  : "強制自 Upstash 雲端拉取最新金鑰、模型參數與訓練資料集並全域更新 (每 50 秒可手動觸發一次)"
+              }
             >
               <RefreshCw className={`h-3 w-3 ${isSyncing ? "animate-spin" : ""}`} />
-              <span>{isSyncing ? "同步中..." : "立即同步雲端"}</span>
+              <span>
+                {isSyncing
+                  ? "同步中..."
+                  : syncCooldown > 0
+                  ? `同步冷卻 (${syncCooldown}s)`
+                  : "立即同步雲端"}
+              </span>
             </button>
           </div>
         </div>
