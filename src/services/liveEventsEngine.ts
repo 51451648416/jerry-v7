@@ -241,3 +241,81 @@ export function parseTdxLiveEventsJson(
     executionTimestamp: timestamp,
   };
 }
+
+export interface MeteringEventDetectionResult {
+  hasMainlineMeterEvent: boolean;
+  mainlineEventDetail?: {
+    description: string;
+    mileageKm: number;
+    severity: string;
+    isStrict: boolean;
+  };
+  rampEvents: {
+    exchangeName: string;
+    description: string;
+    isStrict: boolean;
+  }[];
+}
+
+/**
+ * 國道 5 號北向主線號誌 (30.5K) 與各交流道匝道儀控即時事件特徵提取
+ */
+export function detectMeteringEventsFromPayload(
+  events: ExtractedLiveEvent[] | any[]
+): MeteringEventDetectionResult {
+  let hasMainlineMeterEvent = false;
+  let mainlineEventDetail: MeteringEventDetectionResult["mainlineEventDetail"] = undefined;
+  const rampEvents: MeteringEventDetectionResult["rampEvents"] = [];
+
+  const rawList = Array.isArray(events) ? events : [];
+
+  for (const item of rawList) {
+    const desc = item.description || item.Description || "";
+    const startKm = typeof item.startKm === "number" ? item.startKm : typeof item.StartKM === "number" ? item.StartKM : 0;
+    const severity = item.severity || item.Severity || "一般";
+
+    // 1. 辨識頭城 30.5K 主線號誌 (Mainline Metering)
+    const isMainlineMatch =
+      desc.includes("頭城主線") ||
+      desc.includes("主線儀控") ||
+      desc.includes("主線號誌") ||
+      desc.includes("主線管制") ||
+      desc.includes("30K+500") ||
+      desc.includes("30.5K") ||
+      (startKm >= 30.0 && startKm <= 31.0 && (desc.includes("號誌") || desc.includes("儀控") || desc.includes("排隊")));
+
+    if (isMainlineMatch) {
+      hasMainlineMeterEvent = true;
+      const isStrict = desc.includes("嚴格") || desc.includes("紅燈") || desc.includes("回堵") || desc.includes("紫爆");
+      mainlineEventDetail = {
+        description: desc,
+        mileageKm: startKm || 30.5,
+        severity: String(severity),
+        isStrict,
+      };
+    }
+
+    // 2. 辨識各入口交流道匝道儀控 (Ramp Metering)
+    const interchanges = ["頭城", "宜蘭", "羅東", "蘇澳"];
+    for (const ic of interchanges) {
+      if (
+        (desc.includes(ic) && (desc.includes("匝道") || desc.includes("儀控") || desc.includes("管制"))) ||
+        (desc.includes("匝道儀控") && desc.includes(ic))
+      ) {
+        const isStrict = desc.includes("嚴格") || desc.includes("大排長龍") || desc.includes("回堵") || desc.includes("紫爆");
+        rampEvents.push({
+          exchangeName: `${ic}匝道`,
+          description: desc,
+          isStrict,
+        });
+      }
+    }
+  }
+
+  return {
+    hasMainlineMeterEvent,
+    mainlineEventDetail,
+    rampEvents,
+  };
+}
+

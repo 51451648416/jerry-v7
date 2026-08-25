@@ -29,6 +29,7 @@ import {
   executeDoubleVerificationAndRecalculation,
   detectTurtleCars,
 } from "./doubleVerificationEngine";
+import { evaluateFreeway5MeteringSystem } from "./rampMeteringEngine";
 
 export const HSUEHSHAN_TUNNEL_TOTAL_LENGTH_KM = 13.097; // 嚴格定義：雪山隧道全長 13.097 km
 export const MODEL_DISCRETIZATION_SLICES = 20; // 嚴格定義：20 個空間微元切片
@@ -904,6 +905,14 @@ export function runVdTrafficEstimator(
   estimated_state.corridorState = corridorState;
   estimated_state.departureRecommendation = departureRecommendation;
 
+  // Step 5.6: Compute Ramp Metering & Mainline 30.5K Pulse System
+  const comprehensiveMeteringState = evaluateFreeway5MeteringSystem(
+    corridorDetectors,
+    [],
+    estimated_state.travelTimeSec
+  );
+  estimated_state.comprehensiveMeteringState = comprehensiveMeteringState;
+
   // Step 6: Execute Automated Consistency Checker with Full Precision
   const checkResult = verifyMathematicalConsistency(estimated_state);
   estimated_state.consistencyCheck = checkResult;
@@ -1051,6 +1060,7 @@ function createInsufficientDataOutput(
         check11_lane2SumMatch: true,
       },
     },
+    comprehensiveMeteringState: evaluateFreeway5MeteringSystem([], [], 660),
   };
 
   return {

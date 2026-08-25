@@ -16,6 +16,7 @@ import { motion, AnimatePresence } from "motion/react";
 import Header, { ActiveTabType } from "./components/Header";
 import SimpleLaneRecommendation from "./components/SimpleLaneRecommendation";
 import AdvancedAnalysisModal from "./components/AdvancedAnalysisModal";
+import RampMeterPulseMeter from "./components/RampMeterPulseMeter";
 import CctvWall from "./components/CctvWall";
 import SystemStatusFooter from "./components/SystemStatusFooter";
 import TunnelGisMap from "./components/TunnelGisMap";
@@ -30,7 +31,8 @@ import AdminAdvancedSettingsModal from "./components/AdminAdvancedSettingsModal"
 import GlobalSearchModal, { SearchResultItem } from "./components/GlobalSearchModal";
 import TwoMinuteStalePrompt from "./components/TwoMinuteStalePrompt";
 import { getResolvedApiUrl, getResolvedApiHeaders, syncApiConfigFromServer } from "./services/apiConfig";
-import { fetchDirectFreewayVd, fetchEtcTravelTimeData } from "./services/tdxDirectClient";
+import { fetchDirectFreewayVd, fetchEtcTravelTimeData, fetchFreewayIncidents, fetchRampMeteringData } from "./services/tdxDirectClient";
+import { evaluateFreeway5MeteringSystem } from "./estimator/rampMeteringEngine";
 import { syncTdxKeysFromServer } from "./services/tdxKeyRotator";
 import { syncDatasetFromServer, captureDetectionToDataset, subscribeDatasetChanges, getStoredDataset } from "./services/datasetRepository";
 import { syncLearnedParametersFromServer, getLearnedParameters, subscribeModelChanges } from "./estimator/modelTrainingEngine";
@@ -376,9 +378,14 @@ export default function App() {
       // 同步獲取 ETC 門架旅行時間 (真值)，啟動空間解耦反向傳播
       let etcTravelTimeSec: number | undefined = undefined;
       try {
-        const etcRaw = await fetchEtcTravelTimeData();
-        if (etcRaw) {
-          const list = Array.isArray(etcRaw) ? etcRaw : etcRaw.TravelTimes || etcRaw.LiveTravelTimes || [];
+        const [etcRaw, incidentRaw, rampMeterRaw] = await Promise.allSettled([
+          fetchEtcTravelTimeData(),
+          fetchFreewayIncidents(),
+          fetchRampMeteringData(),
+        ]);
+
+        if (etcRaw.status === "fulfilled" && etcRaw.value) {
+          const list = Array.isArray(etcRaw.value) ? etcRaw.value : etcRaw.value.TravelTimes || etcRaw.value.LiveTravelTimes || [];
           for (const item of list) {
             const val = item.TravelTime ?? item.SectionTravelTime ?? item.ActualTravelTime;
             if (typeof val === "number" && val > 0) {
@@ -387,8 +394,21 @@ export default function App() {
             }
           }
         }
+
+        const incidents = incidentRaw.status === "fulfilled" && Array.isArray(incidentRaw.value) ? incidentRaw.value : [];
+        const meters = rampMeterRaw.status === "fulfilled" && Array.isArray(rampMeterRaw.value) ? rampMeterRaw.value : [];
+
+        if (output?.estimated_state) {
+          const enrichedMetering = evaluateFreeway5MeteringSystem(
+            output.raw_api.records || [],
+            incidents,
+            output.estimated_state.travelTimeSec,
+            meters
+          );
+          output.estimated_state.comprehensiveMeteringState = enrichedMetering;
+        }
       } catch (etcErr) {
-        console.warn("ETC TravelTime Sync Notice:", etcErr);
+        console.warn("ETC / Metering / Incidents Sync Notice:", etcErr);
       }
 
       // Automatically incorporate detection data into dataset on each analysis with ETC ground truth
@@ -687,12 +707,24 @@ export default function App() {
           </div>
         )}
 
-        {/* TAB 4: 數理模型與原理 (Mathematical Theory & Model Physics) */}
-        {activeTab === "theory" && (
-          <TheoryAndPrinciplesView
-            estimatorOutput={estimatorOutput}
-            direction={direction}
-          />
+        {/* TAB 4: 國5北向 匝道儀控與主線號誌管制 (Ramp Metering & Traffic Lights - 取代原本數理模型位置) */}
+        {(activeTab === "metering" || activeTab === "theory") && (
+          <div className="space-y-5">
+            {isStaleOverTwoMinutes && (
+              <TwoMinuteStalePrompt
+                direction={direction}
+                onDirectionChange={handleDirectionChange}
+                onRefresh={() => fetchTdxAndEstimate(direction)}
+                isLoading={isLoading}
+                cooldown={cooldown}
+                elapsedSeconds={elapsedSinceLastFetch}
+              />
+            )}
+            <RampMeterPulseMeter
+              estimatorOutput={estimatorOutput}
+              direction={direction}
+            />
+          </div>
         )}
 
         {/* 備用 / 資料庫管理 (已整併至後台管理系統) */}

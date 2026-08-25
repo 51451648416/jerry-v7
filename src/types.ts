@@ -364,6 +364,9 @@ export interface EstimatedState {
   // 0K ~ 54K Full Corridor State & Departure Recommendations
   corridorState?: CorridorEstimatedState;
   departureRecommendation?: DepartureRecommendation;
+
+  // 國道 5 號北向匝道儀控與頭城 30.5K 主線號誌管制 (Pulse & Three-Tier Model)
+  comprehensiveMeteringState?: import("./estimator/rampMeteringEngine").ComprehensiveMeteringState;
 }
 
 export interface CorridorInterchange {

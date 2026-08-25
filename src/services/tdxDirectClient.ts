@@ -32,6 +32,9 @@ export const TDX_OFFICIAL_FREEWAY_VD_URL =
 export const TDX_OFFICIAL_FREEWAY_LIVE_EVENTS_URL =
   "https://tdx.transportdata.tw/api/basic/v2/Road/Traffic/Live/LiveEvent/Freeway?$filter=contains(Location/FreeExpressHighway/Road,%20%27國道5號%27)&$format=JSON";
 
+export const TDX_OFFICIAL_FREEWAY_INCIDENT_URL =
+  "https://tdx.transportdata.tw/api/basic/v2/Road/Traffic/Live/Incident/Freeway?$filter=contains(Location/FreeExpressHighway/Road,%20%27國道5號%27)&$format=JSON";
+
 /**
  * 安全防呆 HTTP 請求函式 (Safe Defensive Fetch)
  * 預先驗證狀態碼與 Content-Type，絕不直接對 HTML 執行 res.json()
@@ -225,6 +228,38 @@ export async function fetchDirectFreewayLiveEvents(customUrl?: string): Promise<
     console.warn("TDX Live Events 即時端點讀取無事件或暫時不可達，安全回傳空事件狀態：", err.message);
     return parseTdxLiveEventsJson({ LiveEvents: [] });
   }
+}
+
+/**
+  * 直接從前端向 TDX 官方 API 抓取國道即時事件與事故通報 (Direct Freeway Incidents Fetch)
+  */
+export async function fetchFreewayIncidents(customUrl?: string): Promise<any[]> {
+  const targetUrl = customUrl && customUrl.trim() ? customUrl.trim() : TDX_OFFICIAL_FREEWAY_INCIDENT_URL;
+  const fallbackUrls = [
+    targetUrl,
+    "https://tdx.transportdata.gov.tw/api/basic/v2/Road/Traffic/Live/Incident/Freeway?$filter=contains(Location/FreeExpressHighway/Road,%20%27國道5號%27)&$format=JSON",
+    "https://tdx.transportdata.tw/api/basic/v2/Road/Traffic/Live/Incident/Freeway?$format=JSON&$filter=FreewayID eq '5' or contains(RoadName, '國道5號')",
+  ];
+
+  for (const url of fallbackUrls) {
+    try {
+      const result = await globalTdxKeyManager.executeWithFailover<any>(url, {
+        method: "GET",
+        headers: {
+          Accept: "application/json",
+        },
+      });
+
+      if (result.data) {
+        if (Array.isArray(result.data)) return result.data;
+        if (Array.isArray(result.data.Incidents)) return result.data.Incidents;
+        if (Array.isArray(result.data.LiveEvents)) return result.data.LiveEvents;
+      }
+    } catch (err: any) {
+      // 嘗試下一組備援端點
+    }
+  }
+  return [];
 }
 
 export async function fetchEtcTravelTimeData(): Promise<any> {

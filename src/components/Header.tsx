@@ -15,13 +15,14 @@ import {
   Bus,
   Route,
   ChevronDown,
+  Radio,
 } from "lucide-react";
 import { VehicleTransitMode } from "../types";
 import Logo from "./Logo";
 import { useCloudSyncStatus } from "../services/cloudSyncService";
 import { Cloud, CloudOff } from "lucide-react";
 
-export type ActiveTabType = "lane" | "corridor" | "departure" | "theory" | "cctv";
+export type ActiveTabType = "lane" | "corridor" | "departure" | "metering" | "theory" | "cctv";
 
 interface HeaderProps {
   activeTab: ActiveTabType;
@@ -359,17 +360,17 @@ export default function Header({
                 <span>出發時間試算</span>
               </button>
 
-              {/* Tab 4: 數理模型與原理 */}
+              {/* Tab 4: 匝道儀控與號誌控管 (取代原本數理模型位置) */}
               <button
-                onClick={() => onTabChange("theory")}
+                onClick={() => onTabChange("metering")}
                 className={`px-3 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1.5 cursor-pointer whitespace-nowrap ${
-                  activeTab === "theory"
+                  activeTab === "metering" || activeTab === "theory"
                     ? "bg-white text-emerald-700 shadow-xs border border-slate-200/80 font-extrabold"
                     : "text-slate-600 hover:text-slate-900"
                 }`}
               >
-                <BookOpen className="h-3.5 w-3.5 text-emerald-600 shrink-0" />
-                <span>數理模型</span>
+                <Radio className="h-3.5 w-3.5 text-emerald-600 shrink-0" />
+                <span>匝道儀控</span>
               </button>
 
               {/* Tab 5: CCTV 監視器 */}
@@ -460,17 +461,17 @@ export default function Header({
             <span className="text-[10px] mt-0.5 whitespace-nowrap">出發試算</span>
           </button>
 
-          {/* 4. 原理模型 */}
+          {/* 4. 匝道儀控 (取代原本數理模型位置) */}
           <button
-            onClick={() => onTabChange("theory")}
+            onClick={() => onTabChange("metering")}
             className={`flex flex-col items-center justify-center py-1 px-0.5 rounded-xl transition cursor-pointer ${
-              activeTab === "theory"
+              activeTab === "metering" || activeTab === "theory"
                 ? "bg-emerald-50 text-emerald-700 font-extrabold"
                 : "text-slate-500 hover:text-slate-800"
             }`}
           >
-            <BookOpen className={`h-4 w-4 ${activeTab === "theory" ? "text-emerald-600" : "text-slate-400"}`} />
-            <span className="text-[10px] mt-0.5 whitespace-nowrap">數理原理</span>
+            <Radio className={`h-4 w-4 ${activeTab === "metering" || activeTab === "theory" ? "text-emerald-600" : "text-slate-400"}`} />
+            <span className="text-[10px] mt-0.5 whitespace-nowrap">匝道儀控</span>
           </button>
 
           {/* 5. CCTV */}

@@ -15,10 +15,18 @@ import {
   SlidersHorizontal,
   ChevronDown,
   ChevronUp,
+  BookOpen,
+  Scale,
+  Activity,
+  Award,
 } from "lucide-react";
 import { FinalEstimatorOutput, Direction } from "../types";
 import SpeedometerGauge from "./SpeedometerGauge";
 import ApiDirectTelemetryTable from "./ApiDirectTelemetryTable";
+import MathTheoryInspector from "./MathTheoryInspector";
+import ModelComparisonCard from "./ModelComparisonCard";
+import RawVsModelDiagnostic from "./RawVsModelDiagnostic";
+import GroundTruthBenchmark from "./GroundTruthBenchmark";
 
 interface SimpleLaneRecommendationProps {
   estimatorOutput: FinalEstimatorOutput;
@@ -32,6 +40,7 @@ export default function SimpleLaneRecommendation({
   onOpenAdvanced,
 }: SimpleLaneRecommendationProps) {
   const [showAdvancedApiOptions, setShowAdvancedApiOptions] = useState(false);
+  const [greySubTab, setGreySubTab] = useState<"theory" | "models" | "raw_vs_model" | "telemetry" | "benchmark">("theory");
   const estState = estimatorOutput.estimated_state;
   const lane1 = estState.laneComparison.lane1;
   const lane2 = estState.laneComparison.lane2;
@@ -138,15 +147,15 @@ export default function SimpleLaneRecommendation({
         {/* 車道切換學習模型微型資訊條 */}
         <div className="pt-2 border-t border-slate-100 flex flex-wrap items-center justify-between gap-2 text-[11px] font-mono text-slate-500 bg-slate-50/70 p-2.5 rounded-2xl">
           <div className="flex items-center gap-2">
-            <span className="text-emerald-700 font-bold flex items-center gap-1">
-              <CheckCircle2 className="h-3.5 w-3.5" />
-              <span>動態切換門檻 ΔT: {trainedMarginSec}s</span>
+            <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" />
+            <span className="text-slate-700 font-bold">
+              切換門檻 ΔT: {trainedMarginSec}s
             </span>
-            <span>・</span>
-            <span>決策信心度: {confidenceScore}%</span>
+            <span className="text-slate-300">|</span>
+            <span className="text-slate-600">決策信心: {confidenceScore}%</span>
           </div>
           <div className="text-[10px] text-slate-400 font-sans">
-            內外側雙車道非線性梯度已訓練
+            內外側雙車道連續積分
           </div>
         </div>
       </div>
@@ -254,18 +263,18 @@ export default function SimpleLaneRecommendation({
         </div>
       </div>
 
-      {/* 3. 底部灰色進階選項：API 原始數據與雙重驗證 (Collapsed by default in a small grey bottom box) */}
-      <div className="bg-slate-100 border border-slate-200 rounded-2xl overflow-hidden shadow-xs">
+      {/* 3. 底部灰色進階區塊：完整整合數理模型、不等式檢驗與 API 原始數據 */}
+      <div className="bg-slate-100 border border-slate-200 rounded-3xl overflow-hidden shadow-xs">
         <button
           onClick={() => setShowAdvancedApiOptions(!showAdvancedApiOptions)}
-          className="w-full px-4 py-2.5 flex items-center justify-between text-xs font-semibold text-slate-600 hover:text-slate-900 transition cursor-pointer bg-slate-100 hover:bg-slate-200/80"
+          className="w-full px-4.5 py-3 flex items-center justify-between text-xs font-bold text-slate-700 hover:text-slate-950 transition cursor-pointer bg-slate-100 hover:bg-slate-200/80"
         >
           <div className="flex items-center gap-2">
-            <SlidersHorizontal className="h-3.5 w-3.5 text-slate-500" />
-            <span>進階選項：TDX API 原始數據與雙重驗證</span>
+            <BookOpen className="h-4 w-4 text-indigo-600" />
+            <span>數理模型與原理檢驗 ‧ TDX 遙測數據庫</span>
           </div>
-          <div className="flex items-center gap-1 text-[11px] text-slate-500 font-mono">
-            <span>{showAdvancedApiOptions ? "收合" : "展開"}</span>
+          <div className="flex items-center gap-1.5 text-[11px] text-slate-500 font-mono">
+            <span>{showAdvancedApiOptions ? "收合數理模型" : "展開數理模型"}</span>
             {showAdvancedApiOptions ? (
               <ChevronUp className="h-3.5 w-3.5" />
             ) : (
@@ -275,20 +284,104 @@ export default function SimpleLaneRecommendation({
         </button>
 
         {showAdvancedApiOptions && (
-          <div className="p-3 border-t border-slate-200 bg-white space-y-3">
-            <ApiDirectTelemetryTable
-              doubleVerification={doubleVerification}
-              isExtremeSituation={isExtremeSituation}
-              defaultExpanded={true}
-            />
+          <div className="p-4 border-t border-slate-200 bg-white space-y-4">
+            {/* 次級導覽按鈕組 */}
+            <div className="flex items-center gap-1.5 overflow-x-auto pb-1 no-scrollbar">
+              <button
+                onClick={() => setGreySubTab("theory")}
+                className={`px-3 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1 cursor-pointer whitespace-nowrap ${
+                  greySubTab === "theory"
+                    ? "bg-indigo-600 text-white shadow-xs"
+                    : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+                }`}
+              >
+                <BookOpen className="h-3 w-3" />
+                <span>數學定理與不等式</span>
+              </button>
 
-            <div className="flex justify-end pt-1">
+              <button
+                onClick={() => setGreySubTab("models")}
+                className={`px-3 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1 cursor-pointer whitespace-nowrap ${
+                  greySubTab === "models"
+                    ? "bg-indigo-600 text-white shadow-xs"
+                    : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+                }`}
+              >
+                <Activity className="h-3 w-3" />
+                <span>20微元空間積分</span>
+              </button>
+
+              <button
+                onClick={() => setGreySubTab("raw_vs_model")}
+                className={`px-3 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1 cursor-pointer whitespace-nowrap ${
+                  greySubTab === "raw_vs_model"
+                    ? "bg-indigo-600 text-white shadow-xs"
+                    : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+                }`}
+              >
+                <Scale className="h-3 w-3" />
+                <span>RAW vs MODEL 對照</span>
+              </button>
+
+              <button
+                onClick={() => setGreySubTab("telemetry")}
+                className={`px-3 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1 cursor-pointer whitespace-nowrap ${
+                  greySubTab === "telemetry"
+                    ? "bg-indigo-600 text-white shadow-xs"
+                    : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+                }`}
+              >
+                <SlidersHorizontal className="h-3 w-3" />
+                <span>TDX API 遙測表</span>
+              </button>
+
+              <button
+                onClick={() => setGreySubTab("benchmark")}
+                className={`px-3 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1 cursor-pointer whitespace-nowrap ${
+                  greySubTab === "benchmark"
+                    ? "bg-indigo-600 text-white shadow-xs"
+                    : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+                }`}
+              >
+                <Award className="h-3 w-3" />
+                <span>Ground Truth 評測</span>
+              </button>
+            </div>
+
+            {/* 子分頁內容 */}
+            <div className="pt-2">
+              {greySubTab === "theory" && estState && (
+                <MathTheoryInspector estState={estState} />
+              )}
+
+              {greySubTab === "models" && estimatorOutput && (
+                <ModelComparisonCard estimatorOutput={estimatorOutput} />
+              )}
+
+              {greySubTab === "raw_vs_model" && estimatorOutput && (
+                <RawVsModelDiagnostic estimatorOutput={estimatorOutput} />
+              )}
+
+              {greySubTab === "telemetry" && (
+                <ApiDirectTelemetryTable
+                  doubleVerification={doubleVerification}
+                  isExtremeSituation={isExtremeSituation}
+                  defaultExpanded={true}
+                />
+              )}
+
+              {greySubTab === "benchmark" && (
+                <GroundTruthBenchmark />
+              )}
+            </div>
+
+            <div className="flex justify-end pt-2 border-t border-slate-100">
               <button
                 onClick={onOpenAdvanced}
-                className="text-xs text-slate-500 hover:text-emerald-700 flex items-center gap-1.5 transition py-1 px-2.5 rounded-lg hover:bg-slate-100 cursor-pointer font-medium"
+                className="text-xs text-slate-600 hover:text-emerald-700 flex items-center gap-1.5 transition py-1.5 px-3 rounded-xl hover:bg-slate-100 cursor-pointer font-bold"
               >
-                <span>進階功能：車道切換模型訓練、RAW vs MODEL 診斷與 20 微元連續積分</span>
-                <ExternalLink className="h-3 w-3" />
+                <span>開啟全螢幕進階工程診斷與模型訓練控制台</span>
+                <ExternalLink className="h-3.5 w-3.5 text-emerald-600" />
               </button>
             </div>
           </div>
@@ -297,5 +390,6 @@ export default function SimpleLaneRecommendation({
     </div>
   );
 }
+
 
 

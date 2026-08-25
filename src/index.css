@@ -21,3 +21,22 @@
 ::-webkit-scrollbar-thumb:hover {
   background: #475569;
 }
+
+@keyframes pulseWidth {
+  0% {
+    width: 8%;
+    opacity: 0.4;
+  }
+  40% {
+    width: 100%;
+    opacity: 1;
+  }
+  60% {
+    width: 100%;
+    opacity: 1;
+  }
+  100% {
+    width: 8%;
+    opacity: 0.4;
+  }
+}
