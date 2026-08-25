@@ -132,12 +132,12 @@ export default function App() {
     // 實作「雲端優先水合 (Cloud-First Hydration)」機制：啟動時立即強制全量雙向水合
     performBidirectionalCloudSync().catch(() => {});
 
-    // 跨後端/跨裝置全域設定、金鑰、資料集與模型權重每 8 秒自動輪詢 Polling
+    // 跨後端/跨裝置全域設定、金鑰、資料集與模型權重每 50 秒自動輪詢 Polling
     const syncAllFromCloud = () => {
       performBidirectionalCloudSync().catch(() => {});
     };
 
-    const pollInterval = setInterval(syncAllFromCloud, 8000); // 嚴格 8 秒輪詢
+    const pollInterval = setInterval(syncAllFromCloud, 50000); // 每 50 秒自動同步一次
 
     // 監聽全域模型與資料集變更，確保當雲端資料到達時立即觸發 React 重新渲染
     const unsubModel = subscribeModelChanges(() => {
