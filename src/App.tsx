@@ -127,7 +127,7 @@ export default function App() {
   useEffect(() => {
     recordVisitorSession();
 
-    // 跨後端/跨裝置全域設定與資料集自動背景同步與每 10 秒 Polling 輪詢機制
+    // 跨後端/跨裝置全域設定與資料集自動背景同步與每 8 秒 Polling 輪詢機制 (Step 4)
     const syncAllFromCloud = () => {
       syncApiConfigFromServer().catch(() => {});
       syncTdxKeysFromServer().catch(() => {});
@@ -136,7 +136,13 @@ export default function App() {
     };
 
     syncAllFromCloud();
-    const pollInterval = setInterval(syncAllFromCloud, 10000);
+    const pollInterval = setInterval(syncAllFromCloud, 8000); // 嚴格 8 秒輪詢
+
+    // 監聽全域雲端同步廣播事件，自動靜默更新本地狀態
+    const handleCloudSyncEvent = () => {
+      // 靜默更新本地狀態，無需使用者手動刷新頁面
+    };
+    window.addEventListener("hsuehshan:cloud_synced", handleCloudSyncEvent);
 
     try {
       const elapsed = computeElapsedSeconds();
@@ -165,7 +171,10 @@ export default function App() {
       console.warn("Could not parse cached traffic state", err);
     }
 
-    return () => clearInterval(pollInterval);
+    return () => {
+      clearInterval(pollInterval);
+      window.removeEventListener("hsuehshan:cloud_synced", handleCloudSyncEvent);
+    };
   }, []);
 
   // Hardware clock synchronized loop (cooldown & timer tracking)

@@ -627,6 +627,9 @@ export interface FinalEstimatorOutput {
     totalDetectors: number;
     records: RawApiDetectorRecord[];
     rawPayload?: any;
+    etcTravelTimeSec?: number;
+    isEtcSynthetic?: boolean;
+    etcLiveTravelTime?: any;
   };
   estimated_state: EstimatedState;
   quality_reports: DataQualityReport[];

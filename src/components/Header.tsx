@@ -18,6 +18,8 @@ import {
 } from "lucide-react";
 import { VehicleTransitMode } from "../types";
 import Logo from "./Logo";
+import { useCloudSyncStatus } from "../services/cloudSyncService";
+import { Cloud, CloudOff } from "lucide-react";
 
 export type ActiveTabType = "lane" | "corridor" | "departure" | "theory" | "cctv";
 
@@ -57,6 +59,7 @@ export default function Header({
   onSelectRoute,
 }: HeaderProps) {
   const [isRouteDropdownOpen, setIsRouteDropdownOpen] = useState(false);
+  const { isCloudConnected, keyCount, modelVersion, isSyncing, triggerManualSync } = useCloudSyncStatus();
 
   const quickRoutes = [
     { label: "南港 ↔ 礁溪全段", originKm: 0.0, destKm: 30.3 },
@@ -75,7 +78,7 @@ export default function Header({
             <div className="flex items-center gap-2 sm:gap-2.5 min-w-0">
               <Logo size="md" showText={false} />
               <div className="min-w-0">
-                <div className="flex items-center gap-1.5">
+                <div className="flex items-center gap-1.5 flex-wrap">
                   <h1 className="text-sm sm:text-base font-extrabold tracking-tight text-slate-900 truncate">
                     餅乾・國5雪隧即時路況
                   </h1>
@@ -88,6 +91,28 @@ export default function Header({
                       即時
                     </span>
                   )}
+                  {/* 雲端同步狀態燈號 (綠燈 / 黃燈) */}
+                  <button
+                    onClick={() => triggerManualSync()}
+                    disabled={isSyncing}
+                    className={`text-[10px] px-1.5 py-0.5 rounded-md font-mono font-bold shrink-0 flex items-center gap-1 border transition cursor-pointer ${
+                      isCloudConnected
+                        ? "bg-emerald-50 text-emerald-700 border-emerald-300 hover:bg-emerald-100"
+                        : "bg-amber-50 text-amber-800 border-amber-300 hover:bg-amber-100"
+                    }`}
+                    title={
+                      isCloudConnected
+                        ? `雲端 Redis 已連線 (已同步 ${keyCount} 組金鑰 / 模型 v${modelVersion})，點擊立即同步`
+                        : "目前為單機快取模式，點擊嘗試重新連線雲端"
+                    }
+                  >
+                    <span
+                      className={`h-1.5 w-1.5 rounded-full ${
+                        isCloudConnected ? "bg-emerald-500 animate-pulse" : "bg-amber-500"
+                      }`}
+                    />
+                    <span>{isCloudConnected ? "🟢 雲端同步" : "🟡 單機快取"}</span>
+                  </button>
                   {(new Date().getHours() === 2 || new Date().getHours() === 3 || (new Date().getHours() === 4 && new Date().getMinutes() === 0)) && (
                     <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-indigo-50 text-indigo-700 border border-indigo-200 font-mono font-bold shrink-0" title="深夜時段 02:00 - 04:00 依規定直接採用原 API 資料">
                       🌙 02~04 原API直通

@@ -564,3 +564,22 @@ export function deleteDatasetRecord(id: string): CapturedDatasetRecord[] {
   } catch (e) {}
   return updated;
 }
+
+/**
+ * 將目前資料集推送至後端伺服器與 Redis
+ */
+export async function pushDatasetToServer(records?: CapturedDatasetRecord[]): Promise<void> {
+  if (typeof fetch === "undefined") return;
+  const list = records || getStoredDataset();
+  try {
+    await fetch("/api/shared/dataset", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(list),
+    });
+  } catch (err) {
+    console.warn("無法推送資料集至伺服器:", err);
+  }
+}
+
+

@@ -29,8 +29,23 @@ async function startServer() {
   app.use(express.json());
 
   // API routes FIRST
-  app.get("/api/health", (req, res) => {
-    res.json({ status: "ok" });
+  app.get("/api/health", async (req, res) => {
+    const redis = getRedis();
+    let redisConnected = false;
+    if (redis) {
+      try {
+        await redis.ping();
+        redisConnected = true;
+      } catch {
+        redisConnected = false;
+      }
+    }
+    res.json({
+      status: "ok",
+      redisConnected,
+      mode: redisConnected ? "upstash_redis_cloud" : "local_memory_fallback",
+      timestamp: new Date().toISOString(),
+    });
   });
 
   // Global in-memory storage for Model Weights
