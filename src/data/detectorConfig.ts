@@ -12,14 +12,13 @@ export interface DetectorStationConfig {
  * 任務一：建立「主線 VD」與「匝道 VD」雙軌感測器對照表 (Dual-Track Sensor Mapping Table)
  */
 
-// 1. 【主線容量判定 VD】：雪隧南口 30K~28K 及內部瓶頸段
+// 1. 【主線號誌影響區判定 VD】：專注於頭城 30.5K 主線號誌前後 2~3 公里 (28.5K ~ 33.5K)，不看雪隧內部
 export const MAINLINE_CAPACITY_VDS: DetectorStationConfig[] = [
-  { detectorId: "VD-N5-N-30.000-M", mileageKm: 30.0, direction: "N", locationName: "頭城主線南口 30.0K (容量判定 VD)", tunnelSection: "隧道南口引道" },
-  { detectorId: "VD-N5-N-28.134-M", mileageKm: 28.134, direction: "N", locationName: "雪隧南口 28.1K (容量判定 VD)", tunnelSection: "隧道終點/南口" },
-  { detectorId: "VD-N5-N-25.000-M", mileageKm: 25.000, direction: "N", locationName: "雪隧內部 25.0K 瓶頸段 (容量判定 VD)", tunnelSection: "隧道中後段" },
-  { detectorId: "VD-N5-N-22.500-M", mileageKm: 22.500, direction: "N", locationName: "雪隧內部 22.5K 避車彎段 (容量判定 VD)", tunnelSection: "隧道核心中段" },
-  { detectorId: "VD-N5-N-18.000-M", mileageKm: 18.000, direction: "N", locationName: "雪隧內部 18.0K (容量判定 VD)", tunnelSection: "隧道前段" },
-  { detectorId: "VD-N5-S-15.203-M", mileageKm: 15.203, direction: "S", locationName: "雪隧北口 15.2K (南下容量判定 VD)", tunnelSection: "隧道北口" },
+  { detectorId: "VD-N5-N-30.500-M", mileageKm: 30.5, direction: "N", locationName: "頭城 30.5K 主線號誌斷面 (管制點 VD)", tunnelSection: "號誌管制斷面" },
+  { detectorId: "VD-N5-N-30.000-M", mileageKm: 30.0, direction: "N", locationName: "頭城主線 30.0K (號誌下游 500m)", tunnelSection: "號誌下游引道" },
+  { detectorId: "VD-N5-N-28.134-M", mileageKm: 28.134, direction: "N", locationName: "雪隧南口 28.1K (號誌下游 2.3km)", tunnelSection: "隧道南口匯流前" },
+  { detectorId: "VD-N5-N-32.000-M", mileageKm: 32.0, direction: "N", locationName: "頭城主線上游 32.0K (號誌上游 1.5km)", tunnelSection: "號誌上游引道" },
+  { detectorId: "VD-N5-N-33.500-M", mileageKm: 33.5, direction: "N", locationName: "頭城主線上游 33.5K (號誌上游 3.0km)", tunnelSection: "號誌上游需求端" },
 ];
 
 // 2. 【頭城 30.5K 主線號誌 VD 與上游對照組 VD】：綁定上游需求 VD 與號誌斷面 VD

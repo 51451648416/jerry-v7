@@ -131,14 +131,14 @@ export function calculateRampSignalTimingWithDualTrack(
     };
   }
 
-  // 2. 主線狀態決定管制基準等級
-  // 若 V_main < 45 km/h 或主線佔有率 > 25% -> 觸發【高強度儀控模式 (STRICT)】
-  // 若 V_main >= 60 km/h 且主線順暢 -> 觸發【寬鬆/無儀控放行模式 (SMOOTH/OFF)】
-  let isStrictMainline = mainlineVMain < 45 || mainlineOcc > 25;
-  let isSmoothMainline = mainlineVMain >= 60 && mainlineOcc < 18;
+  // 2. 主線狀態決定管制基準等級 (以頭城 30.5K 號誌前後 2~3 公里為基準，不看雪隧內部)
+  // 若 V_main < 50 km/h 或主線佔有率 > 20% -> 觸發【高強度儀控模式 (STRICT)】
+  // 若 V_main >= 68 km/h 且主線順暢 -> 觸發【寬鬆/無儀控放行模式 (SMOOTH/OFF)】
+  let isStrictMainline = mainlineVMain < 50 || mainlineOcc > 20;
+  let isSmoothMainline = mainlineVMain >= 68 && mainlineOcc <= 13;
 
-  // 如果主線順暢且匝道無壅塞 (occRamp < 18 且非嚴格主線)，則不實施匝道儀控 (全線暢通 / 暢行常開)
-  if (isSmoothMainline && occRamp < 18) {
+  // 門檻靈敏調控：僅在主線 30.5K 號誌周邊 2~3km 極通暢且匝道無車流累積時 (occRamp <= 12 且 qRamp < 500) 免除儀控
+  if (isSmoothMainline && occRamp <= 12 && qRamp < 500 && !isStrictMainline) {
     return {
       exchangeName,
       isMetered: false,
@@ -151,7 +151,7 @@ export function calculateRampSignalTimingWithDualTrack(
       intensityLabel: "🟢 暢行常開 (未啟動儀控)",
       intensityColorClass: "text-emerald-400 bg-emerald-950/60 border-emerald-500/30",
       pulseIntervalSec: 0,
-      description: "主線與匝道交通順暢，未啟動匝道儀控，全線常態開放通行",
+      description: "主線號誌區與匝道交通順暢，未達管制門檻，全線常態開放通行",
       upstreamQueueLengthMeters: 0,
       rampOccupancy: parseFloat(occRamp.toFixed(1)),
     };
@@ -306,13 +306,19 @@ export function estimateTouchengMainlineMetering(
     }
   }
 
-  // 2. 計算流量截斷差 Delta_Q 與車速差
+  // 2. 計算 30.5K 主線號誌前後 2~3 公里之流量截斷差 Delta_Q 與車速差
   const deltaQ = qUpstream - qMeter;
   const speedDrop = vUpstream - vMeter;
 
-  // 3. 判定邏輯：if ((Delta_Q > 250 && V_meter < 45) || Occupancy_30_5K > 22%)
+  // 3. 調低管制門檻 (更靈敏判定)：
+  // 僅監控頭城 30.5K 號誌前後 2~3km (不看雪隧內部)
+  // 當斷面車速 < 65 km/h、佔有率 > 14%、上游流量累積 (ΔQ > 80 且 V_meter < 70) 或速差陡降 (speedDrop > 12 且 ΔQ > 40)
+  const isTriggeredBySpeed = vMeter < 65;
+  const isTriggeredByOcc = occupancy30_5K > 14;
+  const isTriggeredByQueue = deltaQ > 80 && vMeter < 70;
+  const isTriggeredByDrop = speedDrop > 12 && deltaQ > 40;
+  const isTriggeredByDiff = isTriggeredBySpeed || isTriggeredByOcc || isTriggeredByQueue || isTriggeredByDrop;
   const isTriggeredByEvent = eventCheck.hasMainlineMeterEvent;
-  const isTriggeredByDiff = (deltaQ > 250 && vMeter < 45) || occupancy30_5K > 22;
   const isMainlineMeterActive = isTriggeredByEvent || isTriggeredByDiff;
 
   if (!isMainlineMeterActive) {
@@ -331,32 +337,44 @@ export function estimateTouchengMainlineMetering(
       queueTailKm: 30.5,
       vMain: parseFloat(vMeter.toFixed(1)),
       kMainOccupancy: parseFloat(occupancy30_5K.toFixed(1)),
-      description: `上游流量 ${Math.round(qUpstream)} vs 斷面流量 ${Math.round(qMeter)} (ΔQ: ${Math.round(deltaQ)}) | 斷面車速: ${Math.round(vMeter)} km/h`,
+      description: `號誌前後 2~3km (32K上游 vs 30.5K斷面) 車流順暢 | 上游 ${Math.round(qUpstream)} / 斷面 ${Math.round(qMeter)} vph (ΔQ: ${Math.round(deltaQ)}) | 斷面車速: ${Math.round(vMeter)} km/h`,
     };
   }
 
-  // 主線管制啟動中
+  // 主線管制啟動中 (調降門檻後之動態週期與強度)
   let tCycle = Math.round(3600 / Math.max(qMeter, 150));
   const cycleSec = Math.max(10, Math.min(60, tCycle));
   const greenSec = 2; // 固定綠燈 2 秒
   const redSec = Math.max(1, cycleSec - greenSec);
 
   let intensity: MeteringIntensity = "MODERATE";
-  let intensityLabel = "🔴 主線儀控管制中";
+  let intensityLabel = "🔴 主線常態儀控 (黃)";
   let intensityColorClass = "text-amber-400 bg-amber-950/60 border-amber-500/40";
-  let mainlineQueueDelayMin = 8;
-  let upstreamQueueLengthKm = 1.8;
+  let mainlineQueueDelayMin = 7;
+  let upstreamQueueLengthKm = 1.5;
 
-  if (vMeter < 30 || occupancy30_5K > 30) {
+  if (vMeter < 40 || occupancy30_5K > 22 || (eventCheck.mainlineEventDetail?.isStrict)) {
     intensity = "STRICT";
     intensityLabel = "🔴 主線嚴格儀控 (紅)";
     intensityColorClass = "text-rose-400 bg-rose-950/60 border-rose-500/40";
-    mainlineQueueDelayMin = 18;
-    upstreamQueueLengthKm = 3.2;
+    mainlineQueueDelayMin = 16;
+    upstreamQueueLengthKm = 2.8;
+  } else if (vMeter < 55 || occupancy30_5K > 16 || deltaQ > 150) {
+    intensity = "MODERATE";
+    intensityLabel = "🔴 主線常態儀控 (黃)";
+    intensityColorClass = "text-amber-400 bg-amber-950/60 border-amber-500/40";
+    mainlineQueueDelayMin = 7;
+    upstreamQueueLengthKm = 1.5;
+  } else {
+    intensity = "SMOOTH";
+    intensityLabel = "🟡 主線微幅儀控 (綠)";
+    intensityColorClass = "text-emerald-400 bg-emerald-950/60 border-emerald-500/30";
+    mainlineQueueDelayMin = 3;
+    upstreamQueueLengthKm = 0.8;
   }
 
   const queueTailKm = parseFloat((30.5 + upstreamQueueLengthKm).toFixed(1));
-  const description = `上游流量 ${Math.round(qUpstream)} vs 斷面流量 ${Math.round(qMeter)} (ΔQ: ${Math.round(deltaQ)}) | 斷面車速: ${Math.round(vMeter)} km/h`;
+  const description = `號誌前後 2~3km (32K上游 vs 30.5K斷面) | 上游 ${Math.round(qUpstream)} / 斷面 ${Math.round(qMeter)} vph (ΔQ: ${Math.round(deltaQ)}) | 斷面車速: ${Math.round(vMeter)} km/h`;
 
   return {
     isMainlineMeterActive: true,
