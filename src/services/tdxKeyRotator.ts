@@ -388,12 +388,6 @@ export class TdxKeyRotationSystem {
         label: "TDX 系統預設金鑰 #1",
       },
       {
-        id: "key-builtin-secondary",
-        clientId: "ghjh308music-2e90f58f-64df-4f6b",
-        clientSecret: "ghjh308music-2e90f58f-64df-4f6b",
-        label: "TDX 系統預設金鑰 #2",
-      },
-      {
         id: "key-builtin-backup",
         clientId: "jerry0903-d82c8d89-56b2-4628",
         clientSecret: "5fdae95b-b2d6-4b80-a153-2238d6e74db5",
@@ -442,12 +436,6 @@ export class TdxKeyRotationSystem {
         clientId: "lovefiy0903-f8d75808-3306-4327",
         clientSecret: "3b2a8558-8fb3-43ec-ada7-14f59e3476b4",
         label: "TDX 系統預設金鑰 #1",
-      },
-      {
-        id: "key-builtin-secondary",
-        clientId: "ghjh308music-2e90f58f-64df-4f6b",
-        clientSecret: "ghjh308music-2e90f58f-64df-4f6b",
-        label: "TDX 系統預設金鑰 #2",
       },
       {
         id: "key-builtin-backup",
@@ -582,7 +570,7 @@ export class TdxKeyRotationSystem {
         errText = raw.length > 200 ? raw.substring(0, 200) + "..." : raw;
       }
       const err = new Error(`TDX 認證伺服器回應失敗 (${status}): ${errText}`);
-      (err as any).isAuthError = status === 401 || status === 403 || status === 429;
+      (err as any).isAuthError = status === 400 || status === 401 || status === 403 || status === 429;
       (err as any).isServerError = status === 500 || status === 502 || status === 503 || status === 504;
       throw err;
     }
@@ -626,18 +614,28 @@ export class TdxKeyRotationSystem {
       } catch (err: any) {
         lastError = err;
         const msg = err.message || "";
-        // 若是伺服器 50x 或逾時錯誤，不要盲目輪轉所有金鑰
-        if (msg.includes("500") || msg.includes("502") || msg.includes("503") || msg.includes("504") || msg.includes("逾時") || msg.includes("Timeout") || msg.includes("aborted")) {
-          throw new Error(`交通部 TDX 官方伺服器認證端點異常：${msg}`);
+        // 若是伺服器 50x 或逾時錯誤或網路中斷，不要盲目輪轉所有金鑰
+        if (
+          msg.includes("500") ||
+          msg.includes("502") ||
+          msg.includes("503") ||
+          msg.includes("504") ||
+          msg.includes("逾時") ||
+          msg.includes("Timeout") ||
+          msg.includes("aborted") ||
+          msg.includes("Load failed") ||
+          msg.includes("Failed to fetch")
+        ) {
+          throw new Error(`交通部 TDX 官方伺服器認證端點異常或連線逾時：${msg}`);
         }
-        console.error(`[TDX 金鑰輪流系統] 金鑰組「${currentPair.label}」獲取 Token 失敗：`, msg);
-        // 只有在明確的認證錯誤 (401/403/429) 時才輪轉金鑰
+        console.warn(`[TDX 金鑰輪流系統] 金鑰組「${currentPair.label}」獲取 Token 失敗：`, msg);
+        // 只有在明確的認證錯誤 (400/401/403/429) 時才輪轉至下一組金鑰
         this.rotateToNextKey(`Token 請求異常 (${msg})`);
       }
     }
 
     throw new Error(
-      `所有 TDX 金鑰組皆無法成功連線獲取 Token (共輪轉嘗試 ${maxAttempts} 組)。最後錯誤：${lastError?.message || "未知錯誤"}`
+      `所有 TDX 金鑰組皆無法成功獲取 Token (共嘗試 ${maxAttempts} 組)。最後錯誤：${lastError?.message || "認證失敗"}`
     );
   }
 
@@ -682,7 +680,7 @@ export class TdxKeyRotationSystem {
         const contentType = response.headers.get("content-type") || "";
         const isJson = contentType.toLowerCase().includes("json");
 
-        // 步驟二：智能區分金鑰失效與伺服器延遲
+        // 步驟二：智能區分金鑰失效與伺服器延遲/端點錯誤
         // 1. 只有在收到 HTTP 401（認證錯誤）、403（金鑰無效）或 429（超過呼叫配額）時，才切換至下一組備用金鑰
         if (status === 401 || status === 403 || status === 429) {
           const errText = await response.text().catch(() => "");
@@ -695,7 +693,16 @@ export class TdxKeyRotationSystem {
           continue;
         }
 
-        // 2. 若遇到 500、502、503、504 或 Fetch Timeout，代表是 TDX 伺服器短暫不穩，保持當前金鑰並進入短暫緩衝，不要一次性廢棄所有金鑰
+        // 2. 若遇 404 (Resource Not Found) 或 400 (Bad Request)，代表是 URL 路徑或過濾參數不存在，非金鑰問題，絕不可輪轉廢棄其他金鑰！
+        if (status === 404) {
+          throw new Error(`TDX 數據端點找不到資源 (HTTP 404)。請確認端點路徑。`);
+        }
+        if (status === 400) {
+          const rawErr = await response.text().catch(() => "");
+          throw new Error(`TDX 數據端點參數請求錯誤 (HTTP 400): ${rawErr.slice(0, 120)}`);
+        }
+
+        // 3. 若遇到 500、502、503、504 或 Fetch Timeout，代表是 TDX 伺服器短暫不穩，保持當前金鑰並回報伺服器不穩，不要一次性廢棄所有金鑰
         if (status === 500 || status === 502 || status === 503 || status === 504) {
           throw new Error(`TDX 官方伺服器暫時不穩 (HTTP ${status})，伺服器回應過慢或維護中`);
         }
@@ -745,11 +752,24 @@ export class TdxKeyRotationSystem {
       } catch (err: any) {
         lastError = err;
         const msg = err.message || "";
-        // 如果是伺服器 50x 或逾時錯誤，不要繼續輪轉其他金鑰，直接中止並回報伺服器延遲
-        if (msg.includes("500") || msg.includes("502") || msg.includes("503") || msg.includes("504") || msg.includes("逾時") || msg.includes("Timeout") || msg.includes("aborted")) {
-          throw new Error(`交通部 TDX 官方伺服器連線異常：${msg}`);
+        // 如果是伺服器 50x、逾時錯誤、404、400 或網路中斷，不要繼續輪轉其他金鑰，直接中止並回報
+        if (
+          msg.includes("500") ||
+          msg.includes("502") ||
+          msg.includes("503") ||
+          msg.includes("504") ||
+          msg.includes("404") ||
+          msg.includes("400") ||
+          msg.includes("逾時") ||
+          msg.includes("Timeout") ||
+          msg.includes("aborted") ||
+          msg.includes("Load failed") ||
+          msg.includes("Failed to fetch") ||
+          msg.includes("HTML 頁面")
+        ) {
+          throw err;
         }
-        console.error(`[TDX 金鑰輪流系統] 透過「${currentPair.label}」請求數據失敗：`, msg);
+        console.warn(`[TDX 金鑰輪流系統] 透過「${currentPair.label}」請求數據失敗：`, msg);
         this.rotateToNextKey(`API 請求異常: ${msg}`);
       }
     }

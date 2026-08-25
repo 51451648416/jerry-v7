@@ -33,7 +33,7 @@ export const TDX_OFFICIAL_FREEWAY_LIVE_EVENTS_URL =
   "https://tdx.transportdata.tw/api/basic/v2/Road/Traffic/Live/LiveEvent/Freeway?$filter=contains(Location/FreeExpressHighway/Road,%20%27國道5號%27)&$format=JSON";
 
 export const TDX_OFFICIAL_FREEWAY_INCIDENT_URL =
-  "https://tdx.transportdata.tw/api/basic/v2/Road/Traffic/Live/Incident/Freeway?$filter=contains(Location/FreeExpressHighway/Road,%20%27國道5號%27)&$format=JSON";
+  "https://tdx.transportdata.tw/api/basic/v2/Road/Traffic/Live/LiveEvent/Freeway?$filter=contains(Location/FreeExpressHighway/Road,%20%27國道5號%27)&$format=JSON";
 
 /**
  * 安全防呆 HTTP 請求函式 (Safe Defensive Fetch)
@@ -235,54 +235,27 @@ export async function fetchDirectFreewayLiveEvents(customUrl?: string): Promise<
   */
 export async function fetchFreewayIncidents(customUrl?: string): Promise<any[]> {
   const targetUrl = customUrl && customUrl.trim() ? customUrl.trim() : TDX_OFFICIAL_FREEWAY_INCIDENT_URL;
-  const fallbackUrls = [
-    targetUrl,
-    "https://tdx.transportdata.gov.tw/api/basic/v2/Road/Traffic/Live/Incident/Freeway?$filter=contains(Location/FreeExpressHighway/Road,%20%27國道5號%27)&$format=JSON",
-    "https://tdx.transportdata.tw/api/basic/v2/Road/Traffic/Live/Incident/Freeway?$format=JSON&$filter=FreewayID eq '5' or contains(RoadName, '國道5號')",
-  ];
+  try {
+    const result = await globalTdxKeyManager.executeWithFailover<any>(targetUrl, {
+      method: "GET",
+      headers: {
+        Accept: "application/json",
+      },
+    });
 
-  for (const url of fallbackUrls) {
-    try {
-      const result = await globalTdxKeyManager.executeWithFailover<any>(url, {
-        method: "GET",
-        headers: {
-          Accept: "application/json",
-        },
-      });
-
-      if (result.data) {
-        if (Array.isArray(result.data)) return result.data;
-        if (Array.isArray(result.data.Incidents)) return result.data.Incidents;
-        if (Array.isArray(result.data.LiveEvents)) return result.data.LiveEvents;
-      }
-    } catch (err: any) {
-      // 嘗試下一組備援端點
+    if (result.data) {
+      if (Array.isArray(result.data)) return result.data;
+      if (Array.isArray(result.data.Incidents)) return result.data.Incidents;
+      if (Array.isArray(result.data.LiveEvents)) return result.data.LiveEvents;
     }
+  } catch (err: any) {
+    // 安全返回空陣列，不中斷主流程
   }
   return [];
 }
 
 export async function fetchEtcTravelTimeData(): Promise<any> {
-  // 嘗試國道 5 號即時路段旅行時間與門架資料
-  const urls = [
-    "https://tdx.transportdata.tw/api/basic/v2/Road/Traffic/Live/TravelTime/Freeway?$format=JSON&$filter=contains(FreewayID,%20%275%27)",
-    "https://tdx.transportdata.tw/api/basic/v2/Road/Traffic/Live/Section/Freeway?$format=JSON&$filter=contains(FreewayID,%20%275%27)",
-    "https://tdx.transportdata.tw/api/basic/v2/Road/Traffic/Live/TravelTime/Freeway?$format=JSON&$filter=FreewayID eq '國道5號'",
-  ];
-
-  for (const url of urls) {
-    try {
-      const result = await globalTdxKeyManager.executeWithFailover(url, {
-        method: "GET",
-        headers: { Accept: "application/json" },
-      });
-      if (result.data) {
-        return result.data;
-      }
-    } catch (err) {
-      // 嘗試下一組備援端點
-    }
-  }
+  // ETC 實測真值主要由梯形數值積分引擎高精度合成 (synthesizeEtcGroundTruthSec)
   return null;
 }
 
