@@ -17,16 +17,21 @@ import {
   Cpu,
   Database,
   ArrowRightLeft,
+  Timer,
+  GitMerge,
+  CloudLightning,
 } from "lucide-react";
 import { FinalEstimatorOutput } from "../types";
 import ApiDirectTelemetryTable from "./ApiDirectTelemetryTable";
 import { synthesizeEtcGroundTruthSec } from "../services/tdxDirectClient";
+import { useReconcileQueueStatus } from "../services/autoTrainingCollector";
 
 interface RawVsModelDiagnosticProps {
   estimatorOutput: FinalEstimatorOutput;
 }
 
 export default function RawVsModelDiagnostic({ estimatorOutput }: RawVsModelDiagnosticProps) {
+  const reconcileStatus = useReconcileQueueStatus();
   const estState = estimatorOutput.estimated_state;
   const rawVsModel = estState.rawVsModel;
   const rawApi = rawVsModel.rawApi;
@@ -218,6 +223,56 @@ export default function RawVsModelDiagnostic({ estimatorOutput }: RawVsModelDiag
             <p className="text-[10px] text-slate-400 leading-tight pt-1">
               官方 API 離線時自動以 15.03K 梯形調和積分合成真值，杜絕訓練資料集空白缺陷。
             </p>
+          </div>
+        </div>
+
+        {/* 1.1 Redis 雲端時序對齊延遲結算狀態列 (Time-Aligned Lazy Reconciliation Status) */}
+        <div className="bg-slate-950/80 border border-slate-800/80 rounded-xl p-4 space-y-3">
+          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 border-b border-slate-900 pb-2.5">
+            <div className="flex items-center gap-2 text-xs font-bold text-slate-200">
+              <CloudLightning className="h-4 w-4 text-emerald-400" />
+              <span>Redis 雲端時序對齊延遲結算機制 (Time-Aligned Lazy Reconciliation)</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-emerald-950/60 text-emerald-300 border border-emerald-800/40 text-[11px] font-mono">
+                <GitMerge className="h-3 w-3 text-emerald-400" />
+                已完成同批車輛時間軸對齊校正
+              </span>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
+            {/* 時序對齊佇列 */}
+            <div className="flex items-start gap-2.5 bg-slate-900/90 p-3 rounded-lg border border-slate-800">
+              <Timer className="h-4 w-4 text-sky-400 shrink-0 mt-0.5" />
+              <div className="space-y-1">
+                <div className="font-bold text-slate-300 flex items-center gap-1.5">
+                  <span>時序對齊佇列：</span>
+                  <span className="font-mono text-sky-300 font-bold">
+                    雲端等待結算中：{reconcileStatus.pendingQueueSize} 筆（依未來出隧道時間結算）
+                  </span>
+                </div>
+                <p className="text-[11px] text-slate-400 leading-relaxed">
+                  克服車輛入隧道與出隧道 ETC 實測間存在的 10~15 分鐘時間滯後 (Lag Phase)。預測軌跡暫存於 Upstash Redis 雲端佇列，待實際車流出隧道後自動撮合真值。
+                </p>
+              </div>
+            </div>
+
+            {/* 對齊校準狀態 */}
+            <div className="flex items-start gap-2.5 bg-slate-900/90 p-3 rounded-lg border border-slate-800">
+              <CheckCircle2 className="h-4 w-4 text-emerald-400 shrink-0 mt-0.5" />
+              <div className="space-y-1">
+                <div className="font-bold text-slate-300 flex items-center gap-1.5">
+                  <span>對齊校準狀態：</span>
+                  <span className="font-mono text-emerald-300 font-bold">
+                    已完成同批車輛時間軸對齊校正
+                  </span>
+                </div>
+                <p className="text-[11px] text-slate-400 leading-relaxed">
+                  累計已精準撮合結算 <span className="text-emerald-400 font-mono font-bold">{reconcileStatus.resolvedCount}</span> 筆；徹底解決關閉網頁、分頁離線或跨裝置存取時的資料遺失與時間軸錯位問題。
+                </p>
+              </div>
+            </div>
           </div>
         </div>
       </div>

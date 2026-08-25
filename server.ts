@@ -161,6 +161,86 @@ async function startServer() {
     }
   });
 
+  // In-memory queue fallback for pending predictions
+  let globalPendingQueue: any[] = [];
+
+  // Vercel Serverless Equivalent Endpoint (/api/reconcile)
+  app.post("/api/reconcile", async (req, res) => {
+    try {
+      const body = typeof req.body === "string" ? JSON.parse(req.body) : req.body;
+      const { predictedSec, modelWeightsSnapshot } = body;
+      const redis = getRedis();
+      let queue: any[] = redis ? ((await redis.get("pending_predictions_queue")) || []) : globalPendingQueue;
+      const newRecord = {
+        id: "pred_" + Date.now() + "_" + Math.random().toString(36).substring(2, 6),
+        timestamp: Date.now(),
+        predictedSec,
+        modelWeightsSnapshot,
+        status: "pending",
+      };
+      queue.push(newRecord);
+      if (queue.length > 50) queue = queue.slice(-50);
+      globalPendingQueue = queue;
+      if (redis) {
+        await redis.set("pending_predictions_queue", queue);
+      }
+      return res.status(200).json({ success: true, queuedId: newRecord.id });
+    } catch (e: any) {
+      return res.status(500).json({ success: false, error: e.message });
+    }
+  });
+
+  app.get("/api/reconcile", async (req, res) => {
+    try {
+      const redis = getRedis();
+      let queue: any[] = redis ? ((await redis.get("pending_predictions_queue")) || []) : globalPendingQueue;
+      let dataset: any[] = redis ? ((await redis.get("dataset_records")) || []) : globalSharedDatasetRecords;
+      const currentEtcSec = Number(req.query.currentEtcSec);
+      const now = Date.now();
+
+      let resolvedCount = 0;
+      const remainingQueue: any[] = [];
+
+      for (const item of queue) {
+        const elapsedSec = (now - item.timestamp) / 1000;
+        if (elapsedSec >= item.predictedSec && !isNaN(currentEtcSec) && currentEtcSec > 0) {
+          dataset.push({
+            timestamp: item.timestamp,
+            predictedSec: item.predictedSec,
+            etcTravelTimeSec: currentEtcSec,
+            deltaSec: item.predictedSec - currentEtcSec,
+            aligned: true,
+            modelWeights: item.modelWeightsSnapshot,
+          });
+          resolvedCount++;
+        } else {
+          remainingQueue.push(item);
+        }
+      }
+
+      globalPendingQueue = remainingQueue;
+      if (resolvedCount > 0) {
+        if (dataset.length > 400) dataset = dataset.slice(-400);
+        globalSharedDatasetRecords = dataset;
+        if (redis) {
+          await redis.set("dataset_records", dataset);
+          await redis.set("pending_predictions_queue", remainingQueue);
+        }
+      } else if (redis) {
+        await redis.set("pending_predictions_queue", remainingQueue);
+      }
+
+      return res.status(200).json({
+        success: true,
+        resolvedCount,
+        pendingQueueSize: remainingQueue.length,
+        totalDatasetSize: dataset.length,
+      });
+    } catch (e: any) {
+      return res.status(500).json({ success: false, error: e.message });
+    }
+  });
+
   // 模型權重共用 API (支援 Upstash Redis 與 In-Memory 雙重同步)
   app.get("/api/shared/model", async (req, res) => {
     try {

@@ -33,7 +33,7 @@ import { getResolvedApiUrl, getResolvedApiHeaders, syncApiConfigFromServer } fro
 import { fetchDirectFreewayVd, fetchEtcTravelTimeData } from "./services/tdxDirectClient";
 import { syncTdxKeysFromServer } from "./services/tdxKeyRotator";
 import { syncDatasetFromServer, captureDetectionToDataset } from "./services/datasetRepository";
-import { syncLearnedParametersFromServer } from "./estimator/modelTrainingEngine";
+import { syncLearnedParametersFromServer, getLearnedParameters } from "./estimator/modelTrainingEngine";
 import TrafficRefreshControl, {
   getRemainingCooldownSec,
   getNextCooldownDuration,
@@ -46,6 +46,7 @@ import { runVdTrafficEstimator } from "./estimator/trafficEngine";
 import { isAdminAuthenticated, subscribeAdminAuth } from "./services/adminAuth";
 import { recordVisitorSession } from "./services/visitorStats";
 import { recordVisitorTrafficTrajectory } from "./services/recentVisitorTrajectoryRepository";
+import { postPredictionToReconcile, triggerLazyReconciliation } from "./services/autoTrainingCollector";
 
 const STALE_DATA_TIMEOUT_SECONDS = 132; // 2.2 分鐘 (132 秒) 未更新即判為過期，需跳轉回更新畫面
 const FORTY_MINUTES_TIMEOUT_SECONDS = 40 * 60; // 40 分鐘 (2400 秒) 判斷：超過 40 分鐘未更新或閒置則完全退回首頁
@@ -389,6 +390,14 @@ export default function App() {
 
       // Automatically incorporate detection data into dataset on each analysis with ETC ground truth
       const { totalCount } = captureDetectionToDataset(output, targetDir, etcTravelTimeSec);
+
+      // 非同步觸發 Redis 雲端延遲結算機制 (Time-Aligned Lazy Reconciliation)
+      if (output?.estimated_state?.travelTimeSec) {
+        postPredictionToReconcile(output.estimated_state.travelTimeSec, getLearnedParameters()).catch(() => {});
+      }
+      if (etcTravelTimeSec && etcTravelTimeSec > 0) {
+        triggerLazyReconciliation(etcTravelTimeSec).catch(() => {});
+      }
 
       // Record visitor trajectory snapshot for 3-hour trend rolling window
       recordVisitorTrafficTrajectory(output);

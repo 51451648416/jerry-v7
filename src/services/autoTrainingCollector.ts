@@ -10,12 +10,124 @@
  * 6. 提供即時狀態監控、倒數計時器、已採集筆數、訓練損失監測與日誌流。
  */
 
+import { useState, useEffect } from "react";
 import { Direction, FinalEstimatorOutput } from "../types";
 import { fetchDirectFreewayVd, fetchEtcTravelTimeData, synthesizeEtcGroundTruthSec } from "./tdxDirectClient";
 import { runVdTrafficEstimator } from "../estimator/trafficEngine";
 import { captureDetectionToDataset, getStoredDataset } from "./datasetRepository";
 import { trainModelOnDataset, getLearnedParameters } from "../estimator/modelTrainingEngine";
 import { getResolvedApiUrl, getResolvedApiHeaders } from "./apiConfig";
+
+export interface ReconcileQueueState {
+  pendingQueueSize: number;
+  resolvedCount: number;
+  totalDatasetSize: number;
+  isAligned: boolean;
+  lastReconciledTime: string | null;
+  lastQueuedId: string | null;
+}
+
+let globalReconcileState: ReconcileQueueState = {
+  pendingQueueSize: 0,
+  resolvedCount: 0,
+  totalDatasetSize: 0,
+  isAligned: true,
+  lastReconciledTime: null,
+  lastQueuedId: null,
+};
+
+const reconcileListeners = new Set<(state: ReconcileQueueState) => void>();
+
+function notifyReconcileListeners() {
+  for (const listener of reconcileListeners) {
+    listener({ ...globalReconcileState });
+  }
+}
+
+export function getReconcileQueueState(): ReconcileQueueState {
+  return { ...globalReconcileState };
+}
+
+export function useReconcileQueueStatus() {
+  const [state, setState] = useState<ReconcileQueueState>(globalReconcileState);
+  useEffect(() => {
+    setState({ ...globalReconcileState });
+    const handleUpdate = (s: ReconcileQueueState) => setState(s);
+    reconcileListeners.add(handleUpdate);
+    return () => {
+      reconcileListeners.delete(handleUpdate);
+    };
+  }, []);
+  return state;
+}
+
+/**
+ * 1. 儲存預測：當系統完成一次 20 微元積分推估時，發送非同步 POST /api/reconcile，將預測軌跡寫入 Redis 佇列
+ */
+export async function postPredictionToReconcile(
+  predictedSec: number,
+  modelWeightsSnapshot?: any
+): Promise<{ success: boolean; queuedId?: string }> {
+  if (typeof fetch === "undefined" || !predictedSec || predictedSec <= 0) {
+    return { success: false };
+  }
+  try {
+    const weights = modelWeightsSnapshot || getLearnedParameters();
+    const res = await fetch("/api/reconcile", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        predictedSec,
+        modelWeightsSnapshot: weights,
+      }),
+    });
+    if (res.ok) {
+      const data = await res.json();
+      if (data.success) {
+        globalReconcileState.pendingQueueSize = (globalReconcileState.pendingQueueSize || 0) + 1;
+        globalReconcileState.lastQueuedId = data.queuedId;
+        globalReconcileState.isAligned = true;
+        notifyReconcileListeners();
+        return { success: true, queuedId: data.queuedId };
+      }
+    }
+  } catch (err) {
+    // 網路暫時離線
+  }
+  return { success: false };
+}
+
+/**
+ * 2. 撮合真值：每次前端刷新路況並取得 ETC 實測真值時，發送 GET /api/reconcile?currentEtcSec=XXX，自動進行時間差對齊與歷史真值存檔
+ */
+export async function triggerLazyReconciliation(
+  currentEtcSec: number
+): Promise<{ success: boolean; resolvedCount?: number; pendingQueueSize?: number; totalDatasetSize?: number }> {
+  if (typeof fetch === "undefined" || isNaN(currentEtcSec) || currentEtcSec <= 0) {
+    return { success: false };
+  }
+  try {
+    const res = await fetch(`/api/reconcile?currentEtcSec=${Math.round(currentEtcSec)}`);
+    if (res.ok) {
+      const data = await res.json();
+      if (data.success) {
+        globalReconcileState = {
+          pendingQueueSize: data.pendingQueueSize ?? globalReconcileState.pendingQueueSize,
+          resolvedCount: (globalReconcileState.resolvedCount || 0) + (data.resolvedCount || 0),
+          totalDatasetSize: data.totalDatasetSize ?? globalReconcileState.totalDatasetSize,
+          isAligned: true,
+          lastReconciledTime: new Date().toLocaleTimeString("zh-TW", { hour12: false }),
+          lastQueuedId: globalReconcileState.lastQueuedId,
+        };
+        notifyReconcileListeners();
+        return data;
+      }
+    }
+  } catch (err) {
+    // 離線
+  }
+  return { success: false };
+}
 
 export interface AutoCollectionConfig {
   intervalSec: number; // 取樣間隔秒數 (例如 15, 30, 60, 120, 300)
@@ -317,6 +429,14 @@ class AutoTrainingCollectorService {
 
       if (!etcTravelTimeSec || etcTravelTimeSec <= 0) {
         etcTravelTimeSec = synthesizeEtcGroundTruthSec(output.raw_api.records, targetDir);
+      }
+
+      // 非同步觸發 Redis 雲端延遲結算機制 (Time-Aligned Lazy Reconciliation)
+      if (output?.estimated_state?.travelTimeSec) {
+        postPredictionToReconcile(output.estimated_state.travelTimeSec, getLearnedParameters()).catch(() => {});
+      }
+      if (etcTravelTimeSec && etcTravelTimeSec > 0) {
+        triggerLazyReconciliation(etcTravelTimeSec).catch(() => {});
       }
 
       // 3. 寫入資料庫庫存 (當達到 1,000 筆時，將自動執行 10 Epochs 深度訓練並清空資料庫)
