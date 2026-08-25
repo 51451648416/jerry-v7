@@ -54,6 +54,112 @@ async function startServer() {
   // Global shared training state
   let globalSharedModelWeights: any = null;
   let globalSharedDatasetRecords: any[] = [];
+  let globalSavedTdxKeys: any = null;
+  let globalSavedApiConfig: any = null;
+
+  // Standard Vercel Serverless Equivalent Endpoints (/api/keys, /api/model, /api/dataset)
+  app.get("/api/keys", async (req, res) => {
+    try {
+      const redis = getRedis();
+      let data = globalSavedTdxKeys;
+      if (redis) {
+        data = (await redis.get("tdx_keys")) || (await redis.get("hsuehshan:config:keys")) || data;
+      }
+      return res.json({ success: true, data });
+    } catch (e: any) {
+      return res.json({ success: false, error: e.message });
+    }
+  });
+
+  app.post("/api/keys", async (req, res) => {
+    try {
+      const body = typeof req.body === "string" ? JSON.parse(req.body) : req.body;
+      globalSavedTdxKeys = body;
+      const keysArray = Array.isArray(body) ? body : body?.keys;
+      if (Array.isArray(keysArray)) {
+        globalTdxKeyManager.setCustomKeys(keysArray);
+      }
+      const redis = getRedis();
+      if (redis) {
+        await redis.set("tdx_keys", body);
+        await redis.set("hsuehshan:config:keys", body);
+      }
+      return res.json({ success: true });
+    } catch (e: any) {
+      return res.status(500).json({ success: false, error: e.message });
+    }
+  });
+
+  app.get("/api/model", async (req, res) => {
+    try {
+      const redis = getRedis();
+      let data = globalSharedModelWeights || globalLearnedWeights;
+      if (redis) {
+        data = (await redis.get("model_weights")) || (await redis.get("hsuehshan:shared:model")) || data;
+      }
+      return res.json({ success: true, data });
+    } catch (e: any) {
+      return res.json({ success: false, error: e.message });
+    }
+  });
+
+  app.post("/api/model", async (req, res) => {
+    try {
+      const body = typeof req.body === "string" ? JSON.parse(req.body) : req.body;
+      globalSharedModelWeights = body;
+      globalLearnedWeights = body;
+      const redis = getRedis();
+      if (redis) {
+        await redis.set("model_weights", body);
+        await redis.set("hsuehshan:shared:model", body);
+      }
+      return res.json({ success: true });
+    } catch (e: any) {
+      return res.status(500).json({ success: false, error: e.message });
+    }
+  });
+
+  app.get("/api/dataset", async (req, res) => {
+    try {
+      const redis = getRedis();
+      let data = globalSharedDatasetRecords;
+      if (redis) {
+        data = (await redis.get("dataset_records")) || (await redis.get("hsuehshan:shared:dataset")) || data || [];
+      }
+      return res.json({ success: true, data: data || [] });
+    } catch (e: any) {
+      return res.json({ success: false, error: e.message });
+    }
+  });
+
+  app.post("/api/dataset", async (req, res) => {
+    try {
+      const body = typeof req.body === "string" ? JSON.parse(req.body) : req.body;
+      const redis = getRedis();
+      if (Array.isArray(body)) {
+        globalSharedDatasetRecords = body.slice(-400);
+      } else if (body) {
+        globalSharedDatasetRecords.push(body);
+        if (globalSharedDatasetRecords.length > 400) {
+          globalSharedDatasetRecords = globalSharedDatasetRecords.slice(-400);
+        }
+      }
+      if (redis) {
+        let current: any[] = (await redis.get("dataset_records")) || (await redis.get("hsuehshan:shared:dataset")) || [];
+        if (Array.isArray(body)) {
+          current = body;
+        } else if (body) {
+          current.push(body);
+          if (current.length > 400) current = current.slice(-400);
+        }
+        await redis.set("dataset_records", current);
+        await redis.set("hsuehshan:shared:dataset", current);
+      }
+      return res.json({ success: true });
+    } catch (e: any) {
+      return res.status(500).json({ success: false, error: e.message });
+    }
+  });
 
   // 模型權重共用 API (支援 Upstash Redis 與 In-Memory 雙重同步)
   app.get("/api/shared/model", async (req, res) => {
@@ -122,10 +228,7 @@ async function startServer() {
     }
   });
 
-  // Global in-memory storage for TDX Keys & API Config
-  let globalSavedTdxKeys: any = null;
-  let globalSavedApiConfig: any = null;
-
+  // Compatibility Endpoint for /api/config/keys
   app.get("/api/config/keys", async (req, res) => {
     try {
       const redis = getRedis();

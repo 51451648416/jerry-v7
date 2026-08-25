@@ -44,17 +44,28 @@ export async function performBidirectionalCloudSync(): Promise<CloudSyncState> {
   notifyListeners();
 
   try {
-    // 1. 檢測伺服器與 Redis 健康狀態
+    // 1. 檢測伺服器與 Redis 健康狀態 (支援 /api/health 與 /api/keys 探測)
     let healthData: any = null;
+    let keysProbeSuccess = false;
     try {
-      const healthRes = await fetch("/api/health");
-      if (healthRes.ok) {
-        healthData = await healthRes.json();
+      const [healthRes, keysRes] = await Promise.allSettled([
+        fetch("/api/health"),
+        fetch("/api/keys"),
+      ]);
+
+      if (healthRes.status === "fulfilled" && healthRes.value.ok) {
+        healthData = await healthRes.value.json();
+      }
+      if (keysRes.status === "fulfilled" && keysRes.value.ok) {
+        const kJson = await keysRes.value.json();
+        if (kJson && kJson.success) {
+          keysProbeSuccess = true;
+        }
       }
     } catch {}
 
-    const isServerOnline = Boolean(healthData && healthData.status === "ok");
-    const isCloudConnected = Boolean(healthData && healthData.redisConnected);
+    const isServerOnline = Boolean((healthData && healthData.status === "ok") || keysProbeSuccess);
+    const isCloudConnected = Boolean((healthData && healthData.redisConnected) || keysProbeSuccess);
     const redisMode = isCloudConnected
       ? "upstash_redis_cloud"
       : isServerOnline

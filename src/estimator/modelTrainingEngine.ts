@@ -67,6 +67,14 @@ export function saveLearnedParameters(params: LearnedModelParameters): void {
   try {
     localStorage.setItem(STORAGE_KEY_LEARNED_PARAMS, JSON.stringify(params));
     if (typeof fetch !== "undefined") {
+      // Vercel Serverless /api/model 與 Express /api/model
+      fetch("/api/model", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(params),
+      }).catch(() => {});
+
+      // 相容性路徑
       fetch("/api/shared/model", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -84,16 +92,17 @@ export function saveLearnedParameters(params: LearnedModelParameters): void {
 }
 
 /**
- * 從後端伺服器同步全域模型權重 (跨後端/跨裝置同步)
+ * 從後端伺服器同步全域模型權重 (跨後端/跨裝置同步，對應 Vercel /api/model)
  */
 export async function syncLearnedParametersFromServer(): Promise<LearnedModelParameters | null> {
   if (typeof fetch === "undefined") return null;
   try {
-    const res = await fetch("/api/shared/model");
+    const res = await fetch("/api/model");
     if (res.ok) {
-      const data = await res.json();
-      if (data && typeof data === "object" && data.version && !data.error) {
-        const merged: LearnedModelParameters = { ...BASELINE_MODEL_PARAMETERS, ...data };
+      const result = await res.json();
+      const rawData = result && typeof result === "object" && "data" in result ? result.data : result;
+      if (rawData && typeof rawData === "object" && (rawData.version || rawData.k_opt) && !rawData.error) {
+        const merged: LearnedModelParameters = { ...BASELINE_MODEL_PARAMETERS, ...rawData };
         try {
           localStorage.setItem(STORAGE_KEY_LEARNED_PARAMS, JSON.stringify(merged));
         } catch (e) {}
@@ -107,7 +116,7 @@ export async function syncLearnedParametersFromServer(): Promise<LearnedModelPar
 export async function pushGlobalLearnedParameters(params: LearnedModelParameters): Promise<void> {
   saveLearnedParameters(params);
   try {
-    await fetch("/api/model/weights", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(params) });
+    await fetch("/api/model", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(params) });
   } catch (err) {}
 }
 

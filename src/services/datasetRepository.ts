@@ -377,8 +377,14 @@ export function captureDetectionToDataset(
     }
   }
 
-  // 同步推送至全域後端持久化 API
+  // 同步推送至全域後端持久化 API (Vercel /api/dataset 與 Express /api/dataset)
   if (typeof fetch !== "undefined") {
+    fetch("/api/dataset", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(newRecord),
+    }).catch(() => {});
+
     fetch("/api/shared/dataset", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -396,19 +402,20 @@ export function captureDetectionToDataset(
 }
 
 /**
- * 從後端伺服器同步全域資料集 (跨後端/跨裝置同步)
+ * 從後端伺服器同步全域資料集 (跨後端/跨裝置同步，對應 Vercel /api/dataset)
  */
 export async function syncDatasetFromServer(): Promise<CapturedDatasetRecord[] | null> {
   if (typeof fetch === "undefined") return null;
   try {
-    const res = await fetch("/api/shared/dataset");
+    const res = await fetch("/api/dataset");
     if (res.ok) {
-      const records = await res.json();
-      if (Array.isArray(records) && records.length > 0) {
+      const result = await res.json();
+      const rawRecords = result && typeof result === "object" && "data" in result ? result.data : result;
+      if (Array.isArray(rawRecords) && rawRecords.length > 0) {
         const current = getStoredDataset();
         const map = new Map<string, CapturedDatasetRecord>();
         for (const r of current) map.set(r.id, r);
-        for (const r of records) {
+        for (const r of rawRecords) {
           if (r && r.id) map.set(r.id, r);
         }
         const merged = Array.from(map.values())
@@ -566,17 +573,22 @@ export function deleteDatasetRecord(id: string): CapturedDatasetRecord[] {
 }
 
 /**
- * 將目前資料集推送至後端伺服器與 Redis
+ * 將目前資料集推送至後端伺服器與 Redis (對應 Vercel /api/dataset)
  */
 export async function pushDatasetToServer(records?: CapturedDatasetRecord[]): Promise<void> {
   if (typeof fetch === "undefined") return;
   const list = records || getStoredDataset();
   try {
-    await fetch("/api/shared/dataset", {
+    await fetch("/api/dataset", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(list),
     });
+    await fetch("/api/shared/dataset", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(list),
+    }).catch(() => {});
   } catch (err) {
     console.warn("無法推送資料集至伺服器:", err);
   }

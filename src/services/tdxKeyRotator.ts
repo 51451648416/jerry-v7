@@ -127,14 +127,15 @@ export function saveStoredTdxKeyPairs(pairs: CustomTdxKeyInput[]): void {
     // 重新載入前端金鑰輪轉池
     globalTdxKeyManager.reloadKeys();
 
-    // 嘗試向後端同步 (若後端有運行)
+    // 嘗試向後端同步 (Vercel Serverless /api/keys 與 Express /api/keys)
     if (typeof fetch !== "undefined") {
-      fetch("/api/tdx/keys/sync", {
+      fetch("/api/keys", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ keys: cleaned }),
+        body: JSON.stringify(cleaned),
       }).catch(() => {});
 
+      // 相容性後端路徑同步
       fetch("/api/config/keys", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -147,15 +148,16 @@ export function saveStoredTdxKeyPairs(pairs: CustomTdxKeyInput[]): void {
 }
 
 /**
- * 從後端伺服器同步全域 TDX 金鑰 (跨後端/跨裝置同步)
+ * 從後端伺服器同步全域 TDX 金鑰 (跨後端/跨裝置同步，對應 Vercel /api/keys)
  */
 export async function syncTdxKeysFromServer(): Promise<CustomTdxKeyInput[] | null> {
   if (typeof fetch === "undefined") return null;
   try {
-    const res = await fetch("/api/config/keys");
+    const res = await fetch("/api/keys");
     if (res.ok) {
-      const data = await res.json();
-      const keysArray = Array.isArray(data) ? data : data?.keys;
+      const result = await res.json();
+      const rawData = result && typeof result === "object" && "data" in result ? result.data : result;
+      const keysArray = Array.isArray(rawData) ? rawData : rawData?.keys;
       if (Array.isArray(keysArray) && keysArray.length > 0) {
         localStorage.setItem(STORAGE_KEY_TDX_API_KEYS, JSON.stringify(keysArray));
         const firstEnabled = keysArray.find((p: any) => p.isEnabled && p.clientId && p.clientSecret);
