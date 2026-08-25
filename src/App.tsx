@@ -211,6 +211,15 @@ export default function App() {
     return () => clearInterval(interval);
   }, [hasStartedAnalysis, estimatorOutput]);
 
+  // 步驟三：冷卻保護倒數結束後，背景自動發起一次輕量路況探測請求，一旦 TDX 伺服器恢復正常，立即自動消除頂部紅色警告橫幅並恢復資料與號誌動態更新
+  const prevCooldownRef = useRef<number>(cooldown);
+  useEffect(() => {
+    if (prevCooldownRef.current > 0 && cooldown === 0 && tdxError !== null) {
+      fetchTdxAndEstimate(direction).catch(() => {});
+    }
+    prevCooldownRef.current = cooldown;
+  }, [cooldown, tdxError, direction]);
+
   // 全域快捷鍵 ⌘K / Ctrl+K 開啟搜尋
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {

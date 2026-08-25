@@ -176,6 +176,54 @@ export async function syncTdxKeysFromServer(): Promise<CustomTdxKeyInput[] | nul
 }
 
 /**
+ * 具備 18 秒逾時與輕量重試之安全 Fetch 封裝
+ */
+async function fetchWithTimeoutAndRetry(
+  url: string,
+  options: RequestInit = {},
+  timeoutMs: number = 18000,
+  maxRetries: number = 2,
+  retryIntervalMs: number = 1500
+): Promise<Response> {
+  let lastErr: any = null;
+
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
+    try {
+      const response = await fetch(url, {
+        ...options,
+        signal: controller.signal,
+      });
+      clearTimeout(timeoutId);
+
+      const status = response.status;
+      const isServerError = status === 500 || status === 502 || status === 503 || status === 504;
+
+      // 若遇伺服器暫時錯誤 (50x)，且尚有重試次數，則在同金鑰等待 1.5 秒後進行輕量重試
+      if (isServerError && attempt < maxRetries) {
+        await new Promise((resolve) => setTimeout(resolve, retryIntervalMs));
+        continue;
+      }
+
+      return response;
+    } catch (err: any) {
+      clearTimeout(timeoutId);
+      lastErr = err;
+      const isTimeout = err.name === "AbortError" || err.message?.includes("aborted") || err.message?.includes("timeout");
+
+      if (attempt < maxRetries) {
+        await new Promise((resolve) => setTimeout(resolve, retryIntervalMs));
+        continue;
+      }
+    }
+  }
+
+  throw lastErr || new Error("連線逾時 (Timeout)");
+}
+
+/**
  * 測試單一組 TDX Client ID 與 Secret 是否能成功獲取 Access Token
  */
 export async function testSingleTdxKey(
@@ -200,14 +248,20 @@ export async function testSingleTdxKey(
   bodyParams.append("client_secret", cleanSecret);
 
   try {
-    const res = await fetch(authUrl, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/x-www-form-urlencoded",
-        Accept: "application/json",
+    const res = await fetchWithTimeoutAndRetry(
+      authUrl,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded",
+          Accept: "application/json",
+        },
+        body: bodyParams.toString(),
       },
-      body: bodyParams.toString(),
-    });
+      18000,
+      1,
+      1500
+    );
     const latencyMs = Date.now() - startTime;
     const contentType = res.headers.get("content-type") || "";
 
@@ -249,9 +303,10 @@ export async function testSingleTdxKey(
     };
   } catch (err: any) {
     const latencyMs = Date.now() - startTime;
+    const isTimeout = err.name === "AbortError" || err.message?.includes("aborted") || err.message?.includes("timeout");
     return {
       success: false,
-      message: `連線失敗或逾時: ${err.message || "網路異常"}`,
+      message: isTimeout ? "連線逾時 (18秒內未回應)" : `連線失敗或逾時: ${err.message || "網路異常"}`,
       latencyMs,
     };
   }
@@ -484,7 +539,7 @@ export class TdxKeyRotationSystem {
   }
 
   /**
-   * 請求指定金鑰組的 TDX Access Token
+   * 請求指定金鑰組的 TDX Access Token (具備 18s 逾時與輕量重試)
    */
   private async requestTokenForPair(pair: TdxKeyPair): Promise<string> {
     const cached = this.tokenCache.get(pair.id);
@@ -497,12 +552,19 @@ export class TdxKeyRotationSystem {
       pair.clientId
     )}&client_secret=${encodeURIComponent(pair.clientSecret)}`;
 
-    const response = await fetch(authUrl, {
-      method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded", Accept: "application/json" },
-      body: requestBody,
-    });
+    const response = await fetchWithTimeoutAndRetry(
+      authUrl,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded", Accept: "application/json" },
+        body: requestBody,
+      },
+      18000,
+      2,
+      1500
+    );
 
+    const status = response.status;
     const contentType = response.headers.get("content-type") || "";
     const isJson = contentType.toLowerCase().includes("json");
 
@@ -519,7 +581,10 @@ export class TdxKeyRotationSystem {
         const raw = await response.text().catch(() => "");
         errText = raw.length > 200 ? raw.substring(0, 200) + "..." : raw;
       }
-      throw new Error(`TDX 認證伺服器回應失敗 (${response.status}): ${errText}`);
+      const err = new Error(`TDX 認證伺服器回應失敗 (${status}): ${errText}`);
+      (err as any).isAuthError = status === 401 || status === 403 || status === 429;
+      (err as any).isServerError = status === 500 || status === 502 || status === 503 || status === 504;
+      throw err;
     }
 
     if (!isJson) {
@@ -560,9 +625,14 @@ export class TdxKeyRotationSystem {
         return { token, keyPair: currentPair };
       } catch (err: any) {
         lastError = err;
-        console.error(`[TDX 金鑰輪流系統] 金鑰組「${currentPair.label}」獲取 Token 失敗：`, err.message);
-        // 輪轉到下一組金鑰並重試
-        this.rotateToNextKey(`Token 請求異常 (${err.message})`);
+        const msg = err.message || "";
+        // 若是伺服器 50x 或逾時錯誤，不要盲目輪轉所有金鑰
+        if (msg.includes("500") || msg.includes("502") || msg.includes("503") || msg.includes("504") || msg.includes("逾時") || msg.includes("Timeout") || msg.includes("aborted")) {
+          throw new Error(`交通部 TDX 官方伺服器認證端點異常：${msg}`);
+        }
+        console.error(`[TDX 金鑰輪流系統] 金鑰組「${currentPair.label}」獲取 Token 失敗：`, msg);
+        // 只有在明確的認證錯誤 (401/403/429) 時才輪轉金鑰
+        this.rotateToNextKey(`Token 請求異常 (${msg})`);
       }
     }
 
@@ -596,50 +666,62 @@ export class TdxKeyRotationSystem {
           ...(options.headers || {}),
         };
 
-        const res = await fetch(endpointUrl, {
-          method: options.method || "GET",
-          headers: reqHeaders,
-          body: options.body,
-        });
+        const response = await fetchWithTimeoutAndRetry(
+          endpointUrl,
+          {
+            method: options.method || "GET",
+            headers: reqHeaders,
+            body: options.body,
+          },
+          18000,
+          2,
+          1500
+        );
 
-        const contentType = res.headers.get("content-type") || "";
+        const status = response.status;
+        const contentType = response.headers.get("content-type") || "";
         const isJson = contentType.toLowerCase().includes("json");
 
-        // 檢查是否遭遇授權失效或限流 (401 Unauthorized / 403 Forbidden / 429 Too Many Requests)
-        if (res.status === 401 || res.status === 403 || res.status === 429) {
-          const errText = await res.text().catch(() => "");
+        // 步驟二：智能區分金鑰失效與伺服器延遲
+        // 1. 只有在收到 HTTP 401（認證錯誤）、403（金鑰無效）或 429（超過呼叫配額）時，才切換至下一組備用金鑰
+        if (status === 401 || status === 403 || status === 429) {
+          const errText = await response.text().catch(() => "");
           const cleanErr = errText.length > 200 ? errText.substring(0, 200) + "..." : errText;
           console.warn(
-            `[TDX 金鑰輪流系統] 金鑰「${currentPair.label}」遭遇 HTTP ${res.status}，自動切換至下一組金鑰...`
+            `[TDX 金鑰輪流系統] 金鑰「${currentPair.label}」遭遇授權或限流 HTTP ${status}，自動切換至下一組金鑰...`
           );
-          // 清除該金鑰的 token 快取
           this.tokenCache.delete(currentPair.id);
-          this.rotateToNextKey(`遭遇 HTTP ${res.status}: ${cleanErr}`);
+          this.rotateToNextKey(`遭遇 HTTP ${status}: ${cleanErr}`);
           continue;
         }
 
-        if (!res.ok) {
+        // 2. 若遇到 500、502、503、504 或 Fetch Timeout，代表是 TDX 伺服器短暫不穩，保持當前金鑰並進入短暫緩衝，不要一次性廢棄所有金鑰
+        if (status === 500 || status === 502 || status === 503 || status === 504) {
+          throw new Error(`TDX 官方伺服器暫時不穩 (HTTP ${status})，伺服器回應過慢或維護中`);
+        }
+
+        if (!response.ok) {
           let errText = "";
           if (isJson) {
             try {
-              const errObj = await res.json();
+              const errObj = await response.json();
               errText = errObj.error_description || errObj.error || errObj.message || JSON.stringify(errObj);
             } catch {
-              errText = `HTTP ${res.status} ${res.statusText}`;
+              errText = `HTTP ${status} ${response.statusText}`;
             }
           } else {
-            const raw = await res.text().catch(() => "");
+            const raw = await response.text().catch(() => "");
             errText = raw.includes("<!DOCTYPE") || raw.includes("<html")
               ? `伺服器回應 HTML 頁面 (可能是 404 或代理路徑不存在)`
               : raw.substring(0, 150);
           }
-          throw new Error(`TDX 數據端點回應錯誤 (${res.status}): ${errText}`);
+          throw new Error(`TDX 數據端點回應錯誤 (${status}): ${errText}`);
         }
 
         if (!isJson) {
-          const rawText = await res.text().catch(() => "");
+          const rawText = await response.text().catch(() => "");
           if (rawText.includes("<!DOCTYPE") || rawText.includes("<html")) {
-            throw new Error(`TDX 端點回傳 HTML 頁面而非 JSON 格式 (狀態碼: HTTP ${res.status})。請確認 API 網址。`);
+            throw new Error(`TDX 端點回傳 HTML 頁面而非 JSON 格式 (狀態碼: HTTP ${status})。請確認 API 網址。`);
           }
           try {
             const parsed = JSON.parse(rawText) as T;
@@ -651,7 +733,7 @@ export class TdxKeyRotationSystem {
           }
         }
 
-        const data = (await res.json()) as T;
+        const data = (await response.json()) as T;
         currentPair.lastUsedTimestamp = Date.now();
         currentPair.isHealthy = true;
 
@@ -662,8 +744,13 @@ export class TdxKeyRotationSystem {
         };
       } catch (err: any) {
         lastError = err;
-        console.error(`[TDX 金鑰輪流系統] 透過「${currentPair.label}」請求數據失敗：`, err.message);
-        this.rotateToNextKey(`API 請求異常: ${err.message}`);
+        const msg = err.message || "";
+        // 如果是伺服器 50x 或逾時錯誤，不要繼續輪轉其他金鑰，直接中止並回報伺服器延遲
+        if (msg.includes("500") || msg.includes("502") || msg.includes("503") || msg.includes("504") || msg.includes("逾時") || msg.includes("Timeout") || msg.includes("aborted")) {
+          throw new Error(`交通部 TDX 官方伺服器連線異常：${msg}`);
+        }
+        console.error(`[TDX 金鑰輪流系統] 透過「${currentPair.label}」請求數據失敗：`, msg);
+        this.rotateToNextKey(`API 請求異常: ${msg}`);
       }
     }
 
