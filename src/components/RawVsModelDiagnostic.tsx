@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useState, useEffect } from "react";
 import {
   Scale,
   Clock,
@@ -25,6 +25,7 @@ import { FinalEstimatorOutput } from "../types";
 import ApiDirectTelemetryTable from "./ApiDirectTelemetryTable";
 import { synthesizeEtcGroundTruthSec } from "../services/tdxDirectClient";
 import { useReconcileQueueStatus } from "../services/autoTrainingCollector";
+import { getStoredDataset, subscribeDatasetChanges } from "../services/datasetRepository";
 
 interface RawVsModelDiagnosticProps {
   estimatorOutput: FinalEstimatorOutput;
@@ -32,6 +33,16 @@ interface RawVsModelDiagnosticProps {
 
 export default function RawVsModelDiagnostic({ estimatorOutput }: RawVsModelDiagnosticProps) {
   const reconcileStatus = useReconcileQueueStatus();
+  const [storedDatasetCount, setStoredDatasetCount] = useState(() => getStoredDataset().length);
+
+  useEffect(() => {
+    setStoredDatasetCount(getStoredDataset().length);
+    const unsub = subscribeDatasetChanges((records) => {
+      setStoredDatasetCount(records.length);
+    });
+    return () => unsub();
+  }, []);
+
   const estState = estimatorOutput.estimated_state;
   const rawVsModel = estState.rawVsModel;
   const rawApi = rawVsModel.rawApi;
@@ -235,7 +246,11 @@ export default function RawVsModelDiagnostic({ estimatorOutput }: RawVsModelDiag
             </div>
             <div className="flex items-center gap-2">
               <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-emerald-950/60 text-emerald-300 border border-emerald-800/40 text-[11px] font-mono">
-                <GitMerge className="h-3 w-3 text-emerald-400" />
+                <Database className="h-3 w-3 text-emerald-400" />
+                雲端已累積資料集：{storedDatasetCount} 筆
+              </span>
+              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-sky-950/60 text-sky-300 border border-sky-800/40 text-[11px] font-mono">
+                <GitMerge className="h-3 w-3 text-sky-400" />
                 已完成同批車輛時間軸對齊校正
               </span>
             </div>
@@ -249,7 +264,9 @@ export default function RawVsModelDiagnostic({ estimatorOutput }: RawVsModelDiag
                 <div className="font-bold text-slate-300 flex items-center gap-1.5">
                   <span>時序對齊佇列：</span>
                   <span className="font-mono text-sky-300 font-bold">
-                    雲端等待結算中：{reconcileStatus.pendingQueueSize} 筆（依未來出隧道時間結算）
+                    {reconcileStatus.pendingQueueSize > 0 
+                      ? `雲端等待結算中：${reconcileStatus.pendingQueueSize} 筆（依未來出隧道時間結算）`
+                      : `即時輪詢就緒（歷史已累積 ${storedDatasetCount} 筆實測真值）`}
                   </span>
                 </div>
                 <p className="text-[11px] text-slate-400 leading-relaxed">
@@ -265,11 +282,11 @@ export default function RawVsModelDiagnostic({ estimatorOutput }: RawVsModelDiag
                 <div className="font-bold text-slate-300 flex items-center gap-1.5">
                   <span>對齊校準狀態：</span>
                   <span className="font-mono text-emerald-300 font-bold">
-                    已完成同批車輛時間軸對齊校正
+                    歷史已結算 {Math.max(storedDatasetCount, reconcileStatus.resolvedCount)} 筆實測真值
                   </span>
                 </div>
                 <p className="text-[11px] text-slate-400 leading-relaxed">
-                  累計已精準撮合結算 <span className="text-emerald-400 font-mono font-bold">{reconcileStatus.resolvedCount}</span> 筆；徹底解決關閉網頁、分頁離線或跨裝置存取時的資料遺失與時間軸錯位問題。
+                  累計已精準撮合結算 <span className="text-emerald-400 font-mono font-bold">{Math.max(storedDatasetCount, reconcileStatus.resolvedCount)}</span> 筆；徹底解決關閉網頁、分頁離線或跨裝置存取時的資料遺失與時間軸錯位問題。
                 </p>
               </div>
             </div>

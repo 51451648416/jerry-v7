@@ -13,6 +13,26 @@ export const MAX_DATASET_STORAGE_LIMIT = 400;
 
 const WEEKDAY_NAMES = ["星期日", "星期一", "星期二", "星期三", "星期四", "星期五", "星期六"];
 
+// 全域記憶體快取與事件監聽器，確保各組件與新裝置開啟時即時 Hydrate
+let inMemoryDatasetCache: CapturedDatasetRecord[] | null = null;
+const datasetChangeListeners = new Set<(records: CapturedDatasetRecord[]) => void>();
+
+export function subscribeDatasetChanges(callback: (records: CapturedDatasetRecord[]) => void): () => void {
+  datasetChangeListeners.add(callback);
+  return () => {
+    datasetChangeListeners.delete(callback);
+  };
+}
+
+function broadcastDatasetChange(records: CapturedDatasetRecord[]) {
+  inMemoryDatasetCache = records;
+  for (const listener of datasetChangeListeners) {
+    try {
+      listener(records);
+    } catch {}
+  }
+}
+
 /**
  * 判斷國定假日或特殊疏運期間
  */
@@ -221,6 +241,9 @@ function getInitialSeedDataset(): CapturedDatasetRecord[] {
  * 自動檢索所有可能之版本鍵值，確保使用者先前累積的任何實測資料絕不遺失
  */
 export function getStoredDataset(): CapturedDatasetRecord[] {
+  if (inMemoryDatasetCache && inMemoryDatasetCache.length > 0) {
+    return inMemoryDatasetCache;
+  }
   try {
     let bestList: CapturedDatasetRecord[] = [];
 
@@ -242,15 +265,19 @@ export function getStoredDataset(): CapturedDatasetRecord[] {
     if (bestList.length > 0) {
       // 確保同步寫回標準主鍵
       localStorage.setItem(LOCAL_STORAGE_DATASET_KEY, JSON.stringify(bestList));
+      inMemoryDatasetCache = bestList;
       return bestList;
     }
 
     const initial = getInitialSeedDataset();
     localStorage.setItem(LOCAL_STORAGE_DATASET_KEY, JSON.stringify(initial));
+    inMemoryDatasetCache = initial;
     return initial;
   } catch (err) {
     console.warn("讀取本機 Dataset 失敗，使用初始種子資料庫", err);
-    return getInitialSeedDataset();
+    const initial = getInitialSeedDataset();
+    inMemoryDatasetCache = initial;
+    return initial;
   }
 }
 
@@ -377,6 +404,9 @@ export function captureDetectionToDataset(
     }
   }
 
+  // 廣播更新全域快取與所有監聽組件
+  broadcastDatasetChange(updated);
+
   // 同步推送至全域後端持久化 API (Vercel /api/dataset 與 Express /api/dataset)
   if (typeof fetch !== "undefined") {
     fetch("/api/dataset", {
@@ -424,6 +454,7 @@ export async function syncDatasetFromServer(): Promise<CapturedDatasetRecord[] |
         try {
           localStorage.setItem(LOCAL_STORAGE_DATASET_KEY, JSON.stringify(merged));
         } catch (e) {}
+        broadcastDatasetChange(merged);
         return merged;
       }
     }
@@ -547,6 +578,7 @@ export function resetDataset(): CapturedDatasetRecord[] {
   try {
     localStorage.setItem(LOCAL_STORAGE_DATASET_KEY, JSON.stringify(initial));
   } catch (e) {}
+  broadcastDatasetChange(initial);
   return initial;
 }
 
@@ -557,6 +589,7 @@ export function clearAllDataset(): CapturedDatasetRecord[] {
   try {
     localStorage.setItem(LOCAL_STORAGE_DATASET_KEY, JSON.stringify([]));
   } catch (e) {}
+  broadcastDatasetChange([]);
   return [];
 }
 
@@ -569,6 +602,7 @@ export function deleteDatasetRecord(id: string): CapturedDatasetRecord[] {
   try {
     localStorage.setItem(LOCAL_STORAGE_DATASET_KEY, JSON.stringify(updated));
   } catch (e) {}
+  broadcastDatasetChange(updated);
   return updated;
 }
 

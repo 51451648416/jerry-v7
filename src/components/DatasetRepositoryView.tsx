@@ -25,6 +25,8 @@ import {
   resetDataset,
   clearAllDataset,
   deleteDatasetRecord,
+  subscribeDatasetChanges,
+  syncDatasetFromServer,
 } from "../services/datasetRepository";
 import { isAdminAuthenticated } from "../services/adminAuth";
 import ModelTrainingMonitor from "./ModelTrainingMonitor";
@@ -44,10 +46,22 @@ export default function DatasetRepositoryView({
 
   useEffect(() => {
     setDataset(getStoredDataset());
+    // 監聽即時更新
+    const unsub = subscribeDatasetChanges((records) => {
+      setDataset(records);
+    });
+    // 即時嘗試由伺服器拉取最新紀錄
+    syncDatasetFromServer().catch(() => {});
+    return () => unsub();
   }, []);
 
   const handleReload = () => {
-    setDataset(getStoredDataset());
+    syncDatasetFromServer().then((records) => {
+      if (records) setDataset(records);
+      else setDataset(getStoredDataset());
+    }).catch(() => {
+      setDataset(getStoredDataset());
+    });
     if (onRefresh) onRefresh();
   };
 
