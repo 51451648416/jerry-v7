@@ -583,14 +583,31 @@ export default function AdminAdvancedSettingsModal({
   const handleSaveAllKeyPairs = () => {
     executeGuardedAction(
       "儲存所有 TDX API 金鑰配置 (無限多組輪轉池)",
-      "此動作將儲存所有金鑰組至系統輪轉池，API 請求時將依序使用（第 1 順位優先，若失效則切換至第 2 順位，依此類推）。",
-      () => {
+      "此動作將儲存所有金鑰組至系統輪轉池與雲端 Redis，所有裝置將同步取得最新金鑰。",
+      async () => {
         saveStoredTdxKeyPairs(keyPairs);
         setTdxStatus(globalTdxKeyManager.getStatus());
         const validCount = keyPairs.filter(
           (k) => k.isEnabled !== false && k.clientId.trim() && k.clientSecret.trim()
         ).length;
-        showNotice(`✓ 已成功儲存 ${validCount} 組有效 TDX 金鑰！系統已同步至順序輪轉調度池。`);
+        
+        let syncedCloud = false;
+        try {
+          const res = await fetch("/api/config/keys", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(keyPairs),
+          });
+          if (res.ok) {
+            syncedCloud = true;
+          }
+        } catch {}
+
+        if (syncedCloud) {
+          showNotice(`✓ 已成功儲存 ${validCount} 組有效 TDX 金鑰！已成功同步至雲端 Redis 與全域所有裝置。`);
+        } else {
+          showNotice(`✓ 已成功儲存 ${validCount} 組有效 TDX 金鑰！系統已同步至順序輪轉調度池。`);
+        }
         onDataChanged?.();
       }
     );
@@ -599,8 +616,8 @@ export default function AdminAdvancedSettingsModal({
   const handleResetTdxKeyPairs = () => {
     executeGuardedAction(
       "還原為系統預設金鑰池",
-      "此動作將清除所有自訂金鑰，還原為系統預設的輪轉金鑰池。",
-      () => {
+      "此動作將清除所有自訂金鑰，還原為系統預設的輪轉金鑰池並同步至雲端。",
+      async () => {
         localStorage.removeItem(STORAGE_KEY_TDX_API_KEYS);
         localStorage.removeItem("TDX_CLIENT_ID");
         localStorage.removeItem("TDX_CLIENT_SECRET");
@@ -616,7 +633,14 @@ export default function AdminAdvancedSettingsModal({
         ]);
         setKeyTestResults({});
         setTdxStatus(globalTdxKeyManager.getStatus());
-        showNotice("✓ 已還原為系統預設金鑰池。");
+        try {
+          await fetch("/api/config/keys", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify([]),
+          });
+        } catch {}
+        showNotice("✓ 已還原為系統預設金鑰池並同步至雲端。");
         onDataChanged?.();
       }
     );

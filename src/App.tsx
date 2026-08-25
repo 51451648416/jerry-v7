@@ -127,11 +127,16 @@ export default function App() {
   useEffect(() => {
     recordVisitorSession();
 
-    // 跨後端/跨裝置全域設定與資料集自動背景同步 (Multi-Backend Automatic Synchronization)
-    syncApiConfigFromServer().catch(() => {});
-    syncTdxKeysFromServer().catch(() => {});
-    syncDatasetFromServer().catch(() => {});
-    syncLearnedParametersFromServer().catch(() => {});
+    // 跨後端/跨裝置全域設定與資料集自動背景同步與每 10 秒 Polling 輪詢機制
+    const syncAllFromCloud = () => {
+      syncApiConfigFromServer().catch(() => {});
+      syncTdxKeysFromServer().catch(() => {});
+      syncDatasetFromServer().catch(() => {});
+      syncLearnedParametersFromServer().catch(() => {});
+    };
+
+    syncAllFromCloud();
+    const pollInterval = setInterval(syncAllFromCloud, 10000);
 
     try {
       const elapsed = computeElapsedSeconds();
@@ -159,6 +164,8 @@ export default function App() {
     } catch (err) {
       console.warn("Could not parse cached traffic state", err);
     }
+
+    return () => clearInterval(pollInterval);
   }, []);
 
   // Hardware clock synchronized loop (cooldown & timer tracking)

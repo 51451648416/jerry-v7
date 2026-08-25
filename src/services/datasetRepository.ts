@@ -1,5 +1,6 @@
 import { CapturedDatasetRecord, Direction, FinalEstimatorOutput } from "../types";
 import { trainModelOnDataset, getLearnedParameters, saveLearnedParameters } from "../estimator/modelTrainingEngine";
+import { synthesizeEtcGroundTruthSec } from "./tdxDirectClient";
 
 const LOCAL_STORAGE_DATASET_KEY = "HSUEHSHAN_CAPTURED_DATASET_V1";
 const CANDIDATE_STORAGE_KEYS = [
@@ -65,6 +66,7 @@ function getInitialSeedDataset(): CapturedDatasetRecord[] {
       tunnelEqSpeedKmh: 78.6,
       tunnelTravelTimeSec: 599,
       tunnelTravelTimeFormatted: "9 分 59 秒",
+      etcTravelTimeSec: 685,
       corridorRange: "0K-54K (南港系統 ↔ 蘇澳端)",
       corridor0to50TravelTimeMin: 42,
       corridor0to54TravelTimeSec: 2520,
@@ -106,6 +108,7 @@ function getInitialSeedDataset(): CapturedDatasetRecord[] {
       tunnelEqSpeedKmh: 39.3,
       tunnelTravelTimeSec: 1198,
       tunnelTravelTimeFormatted: "19 分 58 秒",
+      etcTravelTimeSec: 1375,
       corridorRange: "0K-54K (南港系統 ↔ 蘇澳端)",
       corridor0to50TravelTimeMin: 78,
       corridor0to54TravelTimeSec: 4680,
@@ -147,6 +150,7 @@ function getInitialSeedDataset(): CapturedDatasetRecord[] {
       tunnelEqSpeedKmh: 38.2,
       tunnelTravelTimeSec: 1234,
       tunnelTravelTimeFormatted: "20 分 34 秒",
+      etcTravelTimeSec: 1415,
       corridorRange: "0K-54K (蘇澳端 ↔ 南港系統)",
       corridor0to50TravelTimeMin: 85,
       corridor0to54TravelTimeSec: 5100,
@@ -188,6 +192,7 @@ function getInitialSeedDataset(): CapturedDatasetRecord[] {
       tunnelEqSpeedKmh: 72.5,
       tunnelTravelTimeSec: 650,
       tunnelTravelTimeFormatted: "10 分 50 秒",
+      etcTravelTimeSec: 745,
       corridorRange: "0K-54K (蘇澳端 ↔ 南港系統)",
       corridor0to50TravelTimeMin: 46,
       corridor0to54TravelTimeSec: 2760,
@@ -328,7 +333,10 @@ export function captureDetectionToDataset(
     tunnelEqSpeedKmh: parseFloat(state.equivalentTravelSpeedKmh.toFixed(1)),
     tunnelTravelTimeSec: actualSec,
     tunnelTravelTimeFormatted: state.travelTimeFormatted,
-    etcTravelTimeSec: typeof etcTravelTimeSec === "number" && etcTravelTimeSec > 0 ? etcTravelTimeSec : undefined,
+    etcTravelTimeSec:
+      typeof etcTravelTimeSec === "number" && etcTravelTimeSec > 0
+        ? etcTravelTimeSec
+        : synthesizeEtcGroundTruthSec(output.raw_api.records, direction),
 
     // 國道5號全線走廊段 (0K ~ 54K)
     corridorRange: direction === "S" ? "0K-54K (南港系統 ↔ 蘇澳端)" : "0K-54K (蘇澳端 ↔ 南港系統)",

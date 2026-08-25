@@ -124,7 +124,7 @@ async function startServer() {
     } catch (err) {
       console.warn("讀取 Redis 金鑰失敗，切換至本機快取:", err);
     }
-    if (!globalSavedTdxKeys) return res.status(404).json({ error: "No keys found" });
+    if (!globalSavedTdxKeys) return res.json([]);
     return res.json(globalSavedTdxKeys);
   });
 
