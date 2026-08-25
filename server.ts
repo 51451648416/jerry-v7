@@ -1,7 +1,25 @@
 import express from "express";
 import path from "path";
 import { createServer as createViteServer } from "vite";
+import { Redis } from "@upstash/redis";
 import { globalTdxKeyManager } from "./src/services/tdxKeyRotator";
+
+// Lazy Upstash Redis Client with Safe Fallback
+let redisClient: Redis | null = null;
+function getRedis(): Redis | null {
+  if (redisClient) return redisClient;
+  const url = process.env.UPSTASH_REDIS_REST_URL;
+  const token = process.env.UPSTASH_REDIS_REST_TOKEN;
+  if (url && token) {
+    try {
+      redisClient = new Redis({ url, token });
+      return redisClient;
+    } catch (e) {
+      console.warn("Upstash Redis 初始化失敗，將自動切換為本機記憶體備援模式:", e);
+    }
+  }
+  return null;
+}
 
 async function startServer() {
   const app = express();
@@ -22,31 +40,66 @@ async function startServer() {
   let globalSharedModelWeights: any = null;
   let globalSharedDatasetRecords: any[] = [];
 
-  // 模型權重共用 API
-  app.get("/api/shared/model", (req, res) => {
+  // 模型權重共用 API (支援 Upstash Redis 與 In-Memory 雙重同步)
+  app.get("/api/shared/model", async (req, res) => {
+    try {
+      const redis = getRedis();
+      if (redis) {
+        const cached = await redis.get("hsuehshan:shared:model");
+        if (cached) {
+          globalSharedModelWeights = cached;
+          return res.json(cached);
+        }
+      }
+    } catch (err) {
+      console.warn("讀取 Redis 模型失敗，切換至本機快取:", err);
+    }
     return res.json(globalSharedModelWeights || { success: false, message: "No model trained yet" });
   });
 
-  app.post("/api/shared/model", (req, res) => {
+  app.post("/api/shared/model", async (req, res) => {
     try {
       globalSharedModelWeights = req.body;
+      const redis = getRedis();
+      if (redis) {
+        await redis.set("hsuehshan:shared:model", req.body);
+      }
       return res.json({ success: true, timestamp: new Date().toISOString() });
     } catch (err: any) {
       return res.status(500).json({ error: err.message });
     }
   });
 
-  // 訓練資料集共用 API
-  app.get("/api/shared/dataset", (req, res) => {
+  // 訓練資料集共用 API (支援 Upstash Redis 與 In-Memory 雙重同步)
+  app.get("/api/shared/dataset", async (req, res) => {
+    try {
+      const redis = getRedis();
+      if (redis) {
+        const cached = await redis.get("hsuehshan:shared:dataset");
+        if (Array.isArray(cached)) {
+          globalSharedDatasetRecords = cached;
+          return res.json(cached);
+        }
+      }
+    } catch (err) {
+      console.warn("讀取 Redis 資料集失敗，切換至本機快取:", err);
+    }
     return res.json(globalSharedDatasetRecords);
   });
 
-  app.post("/api/shared/dataset", (req, res) => {
+  app.post("/api/shared/dataset", async (req, res) => {
     try {
       if (Array.isArray(req.body)) {
-        globalSharedDatasetRecords = req.body;
-      } else {
-        globalSharedDatasetRecords.push(req.body);
+        globalSharedDatasetRecords = req.body.slice(0, 1000);
+      } else if (req.body && typeof req.body === "object") {
+        globalSharedDatasetRecords.unshift(req.body);
+        if (globalSharedDatasetRecords.length > 1000) {
+          globalSharedDatasetRecords = globalSharedDatasetRecords.slice(0, 1000);
+        }
+      }
+      const redis = getRedis();
+      if (redis) {
+        await redis.set("hsuehshan:shared:dataset", globalSharedDatasetRecords);
       }
       return res.json({ success: true, total: globalSharedDatasetRecords.length });
     } catch (err: any) {
@@ -58,17 +111,33 @@ async function startServer() {
   let globalSavedTdxKeys: any = null;
   let globalSavedApiConfig: any = null;
 
-  app.get("/api/config/keys", (req, res) => {
+  app.get("/api/config/keys", async (req, res) => {
+    try {
+      const redis = getRedis();
+      if (redis) {
+        const cached = await redis.get("hsuehshan:config:keys");
+        if (cached) {
+          globalSavedTdxKeys = cached;
+          return res.json(cached);
+        }
+      }
+    } catch (err) {
+      console.warn("讀取 Redis 金鑰失敗，切換至本機快取:", err);
+    }
     if (!globalSavedTdxKeys) return res.status(404).json({ error: "No keys found" });
     return res.json(globalSavedTdxKeys);
   });
 
-  app.post("/api/config/keys", (req, res) => {
+  app.post("/api/config/keys", async (req, res) => {
     try {
       globalSavedTdxKeys = req.body;
       const keysArray = Array.isArray(req.body) ? req.body : req.body?.keys;
       if (Array.isArray(keysArray)) {
         globalTdxKeyManager.setCustomKeys(keysArray);
+      }
+      const redis = getRedis();
+      if (redis) {
+        await redis.set("hsuehshan:config:keys", req.body);
       }
       return res.json({ success: true });
     } catch (err: any) {
@@ -76,30 +145,62 @@ async function startServer() {
     }
   });
 
-  app.get("/api/config/endpoint", (req, res) => {
+  app.get("/api/config/endpoint", async (req, res) => {
+    try {
+      const redis = getRedis();
+      if (redis) {
+        const cached = await redis.get("hsuehshan:config:endpoint");
+        if (cached) {
+          globalSavedApiConfig = cached;
+          return res.json(cached);
+        }
+      }
+    } catch (err) {
+      console.warn("讀取 Redis API 設定失敗，切換至本機快取:", err);
+    }
     if (!globalSavedApiConfig) return res.status(404).json({ error: "No api config found" });
     return res.json(globalSavedApiConfig);
   });
 
-  app.post("/api/config/endpoint", (req, res) => {
+  app.post("/api/config/endpoint", async (req, res) => {
     try {
       globalSavedApiConfig = req.body;
+      const redis = getRedis();
+      if (redis) {
+        await redis.set("hsuehshan:config:endpoint", req.body);
+      }
       return res.json({ success: true });
     } catch (err: any) {
       return res.status(500).json({ error: err.message });
     }
   });
 
-  app.get("/api/model/weights", (req, res) => {
+  app.get("/api/model/weights", async (req, res) => {
+    try {
+      const redis = getRedis();
+      if (redis) {
+        const cached = await redis.get("hsuehshan:model:weights");
+        if (cached) {
+          globalLearnedWeights = cached;
+          return res.json(cached);
+        }
+      }
+    } catch (err) {
+      console.warn("讀取 Redis 模型權重失敗，切換至本機快取:", err);
+    }
     if (!globalLearnedWeights) {
       return res.status(404).json({ error: "No global weights found" });
     }
     return res.json(globalLearnedWeights);
   });
 
-  app.post("/api/model/weights", (req, res) => {
+  app.post("/api/model/weights", async (req, res) => {
     try {
       globalLearnedWeights = req.body;
+      const redis = getRedis();
+      if (redis) {
+        await redis.set("hsuehshan:model:weights", req.body);
+      }
       return res.json({ success: true });
     } catch (err: any) {
       return res.status(500).json({ error: err.message });
