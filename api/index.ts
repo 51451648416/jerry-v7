@@ -49,14 +49,32 @@ export default async function handler(req: any, res: any) {
       }
       if (req.method === "POST") {
         if (redis) {
-          let current: any[] = (await redis.get("dataset_records")) || [];
-          if (Array.isArray(body)) {
-            current = body;
-          } else if (body) {
-            current.push(body);
-            if (current.length > 400) current = current.slice(-400);
+          let current: any = (await redis.get("dataset_records")) || [];
+          if (typeof current === "string") {
+            try { current = JSON.parse(current); } catch {}
           }
-          await redis.set("dataset_records", current);
+          const map = new Map<string, any>();
+          for (const item of (Array.isArray(current) ? current : [])) {
+            if (item && typeof item === "object") {
+              const id = item.id || `item_${item.timestamp || Math.random()}`;
+              map.set(id, item);
+            }
+          }
+          if (Array.isArray(body)) {
+            for (const item of body) {
+              if (item && typeof item === "object") {
+                const id = item.id || `item_${item.timestamp || Math.random()}`;
+                map.set(id, item);
+              }
+            }
+          } else if (body && typeof body === "object") {
+            const id = body.id || `item_${body.timestamp || Math.random()}`;
+            map.set(id, body);
+          }
+          const merged = Array.from(map.values())
+            .sort((a: any, b: any) => (b.unixTimestampMs || b.timestamp || 0) - (a.unixTimestampMs || a.timestamp || 0))
+            .slice(0, 400);
+          await redis.set("dataset_records", merged);
         }
         return res.status(200).json({ success: true });
       }

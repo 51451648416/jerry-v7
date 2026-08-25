@@ -32,8 +32,9 @@ import TwoMinuteStalePrompt from "./components/TwoMinuteStalePrompt";
 import { getResolvedApiUrl, getResolvedApiHeaders, syncApiConfigFromServer } from "./services/apiConfig";
 import { fetchDirectFreewayVd, fetchEtcTravelTimeData } from "./services/tdxDirectClient";
 import { syncTdxKeysFromServer } from "./services/tdxKeyRotator";
-import { syncDatasetFromServer, captureDetectionToDataset } from "./services/datasetRepository";
-import { syncLearnedParametersFromServer, getLearnedParameters } from "./estimator/modelTrainingEngine";
+import { syncDatasetFromServer, captureDetectionToDataset, subscribeDatasetChanges, getStoredDataset } from "./services/datasetRepository";
+import { syncLearnedParametersFromServer, getLearnedParameters, subscribeModelChanges } from "./estimator/modelTrainingEngine";
+import { performBidirectionalCloudSync } from "./services/cloudSyncService";
 import TrafficRefreshControl, {
   getRemainingCooldownSec,
   getNextCooldownDuration,
@@ -124,26 +125,27 @@ export default function App() {
     elapsedSinceLastFetch >= STALE_DATA_TIMEOUT_SECONDS &&
     elapsedSinceLastFetch < FORTY_MINUTES_TIMEOUT_SECONDS;
 
-  // Restore analysis state & cached output from localStorage on initial mount and sync from server
+  // Restore analysis state & cached output from localStorage on initial mount and sync from server (Cloud-First Hydration)
   useEffect(() => {
     recordVisitorSession();
 
-    // 跨後端/跨裝置全域設定與資料集自動背景同步與每 8 秒 Polling 輪詢機制 (Step 4)
+    // 實作「雲端優先水合 (Cloud-First Hydration)」機制：啟動時立即強制全量雙向水合
+    performBidirectionalCloudSync().catch(() => {});
+
+    // 跨後端/跨裝置全域設定、金鑰、資料集與模型權重每 8 秒自動輪詢 Polling
     const syncAllFromCloud = () => {
-      syncApiConfigFromServer().catch(() => {});
-      syncTdxKeysFromServer().catch(() => {});
-      syncDatasetFromServer().catch(() => {});
-      syncLearnedParametersFromServer().catch(() => {});
+      performBidirectionalCloudSync().catch(() => {});
     };
 
-    syncAllFromCloud();
     const pollInterval = setInterval(syncAllFromCloud, 8000); // 嚴格 8 秒輪詢
 
-    // 監聽全域雲端同步廣播事件，自動靜默更新本地狀態
-    const handleCloudSyncEvent = () => {
-      // 靜默更新本地狀態，無需使用者手動刷新頁面
-    };
-    window.addEventListener("hsuehshan:cloud_synced", handleCloudSyncEvent);
+    // 監聽全域模型與資料集變更，確保當雲端資料到達時立即觸發 React 重新渲染
+    const unsubModel = subscribeModelChanges(() => {
+      // 模型權重已水合至記憶體快取
+    });
+    const unsubDataset = subscribeDatasetChanges(() => {
+      // 資料集已水合至記憶體快取
+    });
 
     try {
       const elapsed = computeElapsedSeconds();
@@ -174,7 +176,8 @@ export default function App() {
 
     return () => {
       clearInterval(pollInterval);
-      window.removeEventListener("hsuehshan:cloud_synced", handleCloudSyncEvent);
+      unsubModel();
+      unsubDataset();
     };
   }, []);
 

@@ -432,7 +432,7 @@ export function captureDetectionToDataset(
 }
 
 /**
- * 從後端伺服器同步全域資料集 (跨後端/跨裝置同步，對應 Vercel /api/dataset)
+ * 從後端伺服器同步全域資料集 (雲端優先水合 Cloud-First Hydration，對應 Vercel /api/dataset)
  */
 export async function syncDatasetFromServer(): Promise<CapturedDatasetRecord[] | null> {
   if (typeof fetch === "undefined") return null;
@@ -440,13 +440,27 @@ export async function syncDatasetFromServer(): Promise<CapturedDatasetRecord[] |
     const res = await fetch("/api/dataset");
     if (res.ok) {
       const result = await res.json();
-      const rawRecords = result && typeof result === "object" && "data" in result ? result.data : result;
+      let rawRecords = result && typeof result === "object" && "data" in result ? result.data : result;
+      if (typeof rawRecords === "string") {
+        try {
+          rawRecords = JSON.parse(rawRecords);
+        } catch {}
+      }
       if (Array.isArray(rawRecords) && rawRecords.length > 0) {
         const current = getStoredDataset();
         const map = new Map<string, CapturedDatasetRecord>();
-        for (const r of current) map.set(r.id, r);
+        // 雲端資料集優先納入
         for (const r of rawRecords) {
-          if (r && r.id) map.set(r.id, r);
+          if (r && typeof r === "object" && (r.id || r.timestamp)) {
+            const safeId = r.id || `REC-${r.timestamp}-${Math.random().toString(36).substring(2, 6)}`;
+            map.set(safeId, { ...r, id: safeId });
+          }
+        }
+        // 本地新增或暫存資料補入 (不覆蓋已在雲端的最新版本)
+        for (const r of current) {
+          if (r && r.id && !map.has(r.id)) {
+            map.set(r.id, r);
+          }
         }
         const merged = Array.from(map.values())
           .sort((a, b) => (b.unixTimestampMs || 0) - (a.unixTimestampMs || 0))
@@ -454,6 +468,7 @@ export async function syncDatasetFromServer(): Promise<CapturedDatasetRecord[] |
         try {
           localStorage.setItem(LOCAL_STORAGE_DATASET_KEY, JSON.stringify(merged));
         } catch (e) {}
+        inMemoryDatasetCache = merged;
         broadcastDatasetChange(merged);
         return merged;
       }

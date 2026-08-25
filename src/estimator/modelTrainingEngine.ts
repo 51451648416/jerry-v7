@@ -37,20 +37,45 @@ const CANDIDATE_HISTORY_KEYS = [
   "HSUEHSHAN_TRAINING_EPOCH_HISTORY",
 ];
 
+// 全域記憶體模型快取與變更訂閱監聽器
+let inMemoryLearnedParamsCache: LearnedModelParameters | null = null;
+const modelChangeListeners = new Set<(params: LearnedModelParameters) => void>();
+
+export function subscribeModelChanges(callback: (params: LearnedModelParameters) => void): () => void {
+  modelChangeListeners.add(callback);
+  return () => {
+    modelChangeListeners.delete(callback);
+  };
+}
+
+function broadcastModelChange(params: LearnedModelParameters) {
+  inMemoryLearnedParamsCache = params;
+  for (const listener of modelChangeListeners) {
+    try {
+      listener(params);
+    } catch {}
+  }
+}
+
 /**
  * 取得當前已學習/校準的最佳模型參數 (持久化於本機儲存，自動向下相容所有歷史鍵值)
  */
 export function getLearnedParameters(): LearnedModelParameters {
+  if (inMemoryLearnedParamsCache) {
+    return inMemoryLearnedParamsCache;
+  }
   for (const key of CANDIDATE_PARAMS_KEYS) {
     try {
       const raw = localStorage.getItem(key);
       if (raw) {
-        const parsed = JSON.parse(raw);
+        const parsed = typeof raw === "string" ? JSON.parse(raw) : raw;
         if (parsed && typeof parsed === "object") {
-          return {
+          const loaded = {
             ...BASELINE_MODEL_PARAMETERS,
             ...parsed,
           };
+          inMemoryLearnedParamsCache = loaded;
+          return loaded;
         }
       }
     } catch (e) {
@@ -61,11 +86,14 @@ export function getLearnedParameters(): LearnedModelParameters {
 }
 
 /**
- * 儲存學習更新後的最佳模型參數，並同步至後端伺服器
+ * 儲存學習更新後的最佳模型參數，並立即同步推送到雲端 Redis 伺服器
  */
 export function saveLearnedParameters(params: LearnedModelParameters): void {
   try {
+    inMemoryLearnedParamsCache = params;
     localStorage.setItem(STORAGE_KEY_LEARNED_PARAMS, JSON.stringify(params));
+    broadcastModelChange(params);
+
     if (typeof fetch !== "undefined") {
       // Vercel Serverless /api/model 與 Express /api/model
       fetch("/api/model", {
@@ -92,7 +120,7 @@ export function saveLearnedParameters(params: LearnedModelParameters): void {
 }
 
 /**
- * 從後端伺服器同步全域模型權重 (跨後端/跨裝置同步，對應 Vercel /api/model)
+ * 從後端伺服器同步全域模型權重 (雲端優先水合 Cloud-First Hydration，對應 Vercel /api/model)
  */
 export async function syncLearnedParametersFromServer(): Promise<LearnedModelParameters | null> {
   if (typeof fetch === "undefined") return null;
@@ -100,12 +128,19 @@ export async function syncLearnedParametersFromServer(): Promise<LearnedModelPar
     const res = await fetch("/api/model");
     if (res.ok) {
       const result = await res.json();
-      const rawData = result && typeof result === "object" && "data" in result ? result.data : result;
-      if (rawData && typeof rawData === "object" && (rawData.version || rawData.k_opt) && !rawData.error) {
+      let rawData = result && typeof result === "object" && "data" in result ? result.data : result;
+      if (typeof rawData === "string") {
+        try {
+          rawData = JSON.parse(rawData);
+        } catch {}
+      }
+      if (rawData && typeof rawData === "object" && (rawData.version || rawData.freeFlowSpeedKmh || rawData.k_opt) && !rawData.error) {
         const merged: LearnedModelParameters = { ...BASELINE_MODEL_PARAMETERS, ...rawData };
         try {
           localStorage.setItem(STORAGE_KEY_LEARNED_PARAMS, JSON.stringify(merged));
         } catch (e) {}
+        inMemoryLearnedParamsCache = merged;
+        broadcastModelChange(merged);
         return merged;
       }
     }

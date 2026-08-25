@@ -24,8 +24,9 @@ import {
   trainModelOnDataset,
   resetParametersToBaseline,
   exportLearnedParametersToJson,
+  subscribeModelChanges,
 } from "../estimator/modelTrainingEngine";
-import { getStoredDataset } from "../services/datasetRepository";
+import { getStoredDataset, subscribeDatasetChanges } from "../services/datasetRepository";
 import { isAdminAuthenticated } from "../services/adminAuth";
 import {
   LearnedModelParameters,
@@ -62,6 +63,18 @@ export default function ModelTrainingMonitor({
 
   useEffect(() => {
     reloadStatus();
+    const unsubModel = subscribeModelChanges((newParams) => {
+      setParams(newParams);
+      setHistory(getTrainingEpochHistory());
+      setLearningStatus(getContinuousLearningStatus(getStoredDataset()));
+    });
+    const unsubData = subscribeDatasetChanges((records) => {
+      setLearningStatus(getContinuousLearningStatus(records));
+    });
+    return () => {
+      unsubModel();
+      unsubData();
+    };
   }, []);
 
   const runTrainingExecution = async () => {

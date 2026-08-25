@@ -136,24 +136,42 @@ async function startServer() {
     try {
       const body = typeof req.body === "string" ? JSON.parse(req.body) : req.body;
       const redis = getRedis();
-      if (Array.isArray(body)) {
-        globalSharedDatasetRecords = body.slice(-400);
-      } else if (body) {
-        globalSharedDatasetRecords.push(body);
-        if (globalSharedDatasetRecords.length > 400) {
-          globalSharedDatasetRecords = globalSharedDatasetRecords.slice(-400);
+      
+      const mergeRecords = (existing: any[], incoming: any) => {
+        const map = new Map<string, any>();
+        for (const item of existing || []) {
+          if (item && typeof item === "object") {
+            const id = item.id || `item_${item.timestamp || Math.random()}`;
+            map.set(id, item);
+          }
         }
-      }
+        if (Array.isArray(incoming)) {
+          for (const item of incoming) {
+            if (item && typeof item === "object") {
+              const id = item.id || `item_${item.timestamp || Math.random()}`;
+              map.set(id, item);
+            }
+          }
+        } else if (incoming && typeof incoming === "object") {
+          const id = incoming.id || `item_${incoming.timestamp || Math.random()}`;
+          map.set(id, incoming);
+        }
+        const merged = Array.from(map.values())
+          .sort((a: any, b: any) => (b.unixTimestampMs || b.timestamp || 0) - (a.unixTimestampMs || a.timestamp || 0))
+          .slice(0, 400);
+        return merged;
+      };
+
+      globalSharedDatasetRecords = mergeRecords(globalSharedDatasetRecords, body);
+
       if (redis) {
-        let current: any[] = (await redis.get("dataset_records")) || (await redis.get("hsuehshan:shared:dataset")) || [];
-        if (Array.isArray(body)) {
-          current = body;
-        } else if (body) {
-          current.push(body);
-          if (current.length > 400) current = current.slice(-400);
+        let redisCurrent: any[] = (await redis.get("dataset_records")) || (await redis.get("hsuehshan:shared:dataset")) || [];
+        if (typeof redisCurrent === "string") {
+          try { redisCurrent = JSON.parse(redisCurrent); } catch {}
         }
-        await redis.set("dataset_records", current);
-        await redis.set("hsuehshan:shared:dataset", current);
+        const updated = mergeRecords(redisCurrent, body);
+        await redis.set("dataset_records", updated);
+        await redis.set("hsuehshan:shared:dataset", updated);
       }
       return res.json({ success: true });
     } catch (e: any) {
