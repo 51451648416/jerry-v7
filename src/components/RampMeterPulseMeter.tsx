@@ -413,264 +413,249 @@ export default function RampMeterPulseMeter({
         </button>
       </div>
 
-      {/* 主體區塊：分為「匝道實體紅綠燈」與「頭城 30.5K 主線號誌實體紅綠燈」 */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 mt-6 relative z-10">
-        
-        {/* 左側卡片：入口匝道放行節奏 (Realistic Physical Ramp Meter Light) */}
-        <div className="lg:col-span-6 bg-slate-950/80 border border-slate-800/90 rounded-2xl p-5 space-y-4 flex flex-col justify-between shadow-lg">
-          <div>
-            <div className="flex items-center justify-between pb-3 border-b border-slate-800/60">
-              <div className="flex items-center gap-2">
-                <Activity className="w-4 h-4 text-emerald-400" />
-                <span className="text-sm font-bold text-white">
-                  【{currentRamp.exchangeName}】實體匝道號誌放行
-                </span>
+      {/* 主體區塊：依據選擇顯示「單獨主線號誌」或「匝道與三重旅行時間模型」 */}
+      {isMainlineSelected ? (
+        <div className="mt-6 max-w-3xl mx-auto bg-slate-950/90 border border-cyan-500/40 rounded-3xl p-6 space-y-5 shadow-2xl relative z-10">
+          <div className="flex items-center justify-between pb-4 border-b border-slate-800/80">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-2xl bg-cyan-950/80 border border-cyan-500/40 flex items-center justify-center text-cyan-400 font-bold font-mono">
+                30.5K
               </div>
-              <div
-                className={`px-2.5 py-1 rounded-full text-xs font-bold border flex items-center gap-1.5 ${currentBadge.bg}`}
-              >
-                <span className={`w-2 h-2 rounded-full ${currentBadge.dot}`} />
-                <span>{currentRamp.intensityLabel}</span>
+              <div>
+                <h3 className="text-base font-bold text-white">頭城 30.5K 主線實體號誌管制 (雪隧南口前)</h3>
+                <p className="text-xs text-slate-400">當雪隧內流量逼近飽和時啟動主線紅綠燈攔截蓄壓</p>
               </div>
             </div>
+            <div className={`px-3.5 py-1.5 rounded-full text-xs font-bold border flex items-center gap-2 ${mainlineBadge.bg}`}>
+              <span className={`w-2.5 h-2.5 rounded-full ${mainlineBadge.dot}`} />
+              <span>{mainlineSignal?.isMainlineMeterActive ? `主線管制中 (${mainlineSignal.intensityLabel})` : "全綠燈放行 (未啟動)"}</span>
+            </div>
+          </div>
 
-            {/* 實體紅綠燈燈具與時相細節展示區 */}
-            <div className="grid grid-cols-1 sm:grid-cols-12 gap-4 items-center pt-3">
-              {/* 擬真實體紅綠燈 */}
-              <div className="sm:col-span-5 flex justify-center">
-                <RealisticTrafficLight
-                  currentPhase={rampPhase}
-                  secondsRemaining={rampRemainingSec}
-                  title="入口匝道號誌"
-                  subtitle={`放行週期 ${currentRamp.cycleSec}s`}
-                />
-              </div>
+          <div className="grid grid-cols-1 sm:grid-cols-12 gap-6 items-center py-2">
+            <div className="sm:col-span-5 flex justify-center">
+              <RealisticTrafficLight
+                currentPhase={mainlinePhase}
+                secondsRemaining={mainlineRemainingSec}
+                title="主線 30.5K 號誌"
+                subtitle={mainlineSignal?.isMainlineMeterActive ? `週期 ${mainlineSignal.cycleSec}s` : "全綠燈直通"}
+                isMainline={true}
+              />
+            </div>
 
-              {/* 右側詳細指標看板 */}
-              <div className="sm:col-span-7 space-y-2.5">
-                <div className="bg-slate-900/90 border border-slate-800 rounded-xl p-3 space-y-2">
-                  <div className="text-[11px] text-slate-400 flex items-center justify-between">
-                    <span>高公局儀控放行速率</span>
-                    <span className="font-mono font-bold text-cyan-300 text-xs">
-                      {currentRamp.vph} vph
-                    </span>
+            <div className="sm:col-span-7 space-y-3.5">
+              {mainlineSignal?.isMainlineMeterActive ? (
+                <div className="bg-rose-950/40 border border-rose-500/30 rounded-2xl p-4 space-y-2.5 text-xs">
+                  <div className="text-rose-200 font-bold flex items-center gap-1.5 text-sm">
+                    <AlertTriangle className="w-4 h-4 text-rose-400" />
+                    主線紅綠燈管制啟動中
                   </div>
-                  <div className="grid grid-cols-2 gap-2">
-                    <div className="bg-slate-950 rounded-lg p-2 border border-slate-800 text-center">
-                      <div className="text-[10px] text-slate-400">綠燈 (一綠一車)</div>
-                      <div className="text-sm font-mono font-bold text-emerald-400">
-                        {currentRamp.greenSec} 秒
+                  <div className="grid grid-cols-2 gap-3 text-center">
+                    <div className="bg-slate-950/80 rounded-xl p-3 border border-slate-800">
+                      <div className="text-[11px] text-slate-400">主線停等延遲</div>
+                      <div className="text-base font-mono font-bold text-rose-300">
+                        +{mainlineSignal.mainlineQueueDelayMin} 分鐘
                       </div>
                     </div>
-                    <div className="bg-slate-950 rounded-lg p-2 border border-slate-800 text-center">
-                      <div className="text-[10px] text-slate-400">紅燈 (阻斷等待)</div>
-                      <div className="text-sm font-mono font-bold text-rose-400">
-                        {currentRamp.redSec} 秒
+                    <div className="bg-slate-950/80 rounded-xl p-3 border border-slate-800">
+                      <div className="text-[11px] text-slate-400">回堵尾端里程</div>
+                      <div className="text-base font-mono font-bold text-amber-300">
+                        {mainlineSignal.queueTailKm}K
                       </div>
                     </div>
                   </div>
                 </div>
-
-                <div className="bg-slate-900/90 border border-slate-800 rounded-xl p-3 flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <Clock className="w-4 h-4 text-amber-400" />
-                    <span className="text-xs text-slate-300 font-medium">
-                      平面排隊停等時間
-                    </span>
+              ) : (
+                <div className="bg-emerald-950/30 border border-emerald-500/30 rounded-2xl p-5 text-center space-y-1.5">
+                  <div className="text-emerald-400 font-bold text-sm">
+                    ✓ 主線號誌維持全綠燈放行
                   </div>
-                  <div className="text-right">
-                    <span className="text-base font-mono font-bold text-amber-300">
-                      約 {currentRamp.queueDelayMinutes} 分鐘
-                    </span>
-                    {currentRamp.upstreamQueueLengthMeters ? (
-                      <div className="text-[10px] text-slate-400">
-                        車隊約 {currentRamp.upstreamQueueLengthMeters} 公尺
-                      </div>
-                    ) : null}
+                  <div className="text-xs text-slate-400 leading-relaxed">
+                    目前雪山隧道南口車流順暢，無額外主線蓄壓回堵，車輛可直接駛入隧道。
                   </div>
                 </div>
+              )}
+
+              <div className="bg-slate-900/90 border border-slate-800 rounded-xl p-3.5 flex items-center justify-between text-xs">
+                <span className="text-slate-400">主線通行時間預估</span>
+                <span className="text-cyan-300 font-mono font-bold text-sm">
+                  約 {(mainlineSignal?.mainlineQueueDelayMin || 3) + (meteringState?.tunnelTravelTimeMin || 11)} 分鐘 (含雪隧11分)
+                </span>
               </div>
             </div>
           </div>
 
-          <div className="text-[11px] text-slate-400 bg-slate-900/60 p-2.5 rounded-xl border border-slate-800/60">
-            💡 <span className="text-slate-300 font-medium">時制說明：</span>
-            依據高公局一綠一車管制準則，每 {currentRamp.pulseIntervalSec} 秒釋出一輛車匯入國5主線。
+          <div className="text-xs text-slate-400 bg-slate-900/80 p-3 rounded-xl border border-slate-800/80 leading-relaxed">
+            🛡️ <span className="text-slate-200 font-medium">主線控管原則：</span>
+            當雪山隧道內部偵測到降速或車頭時距過小，30.5K 主線號誌燈將進行紅燈循環攔截，確保隧道內維持安全容量，避免嚴重回堵。
           </div>
         </div>
+      ) : (
+        <>
+          {/* 匝道實體紅綠燈卡 */}
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 mt-6 relative z-10">
+            <div className="lg:col-span-12 bg-slate-950/80 border border-slate-800/90 rounded-2xl p-5 space-y-4 flex flex-col justify-between shadow-lg">
+              <div>
+                <div className="flex items-center justify-between pb-3 border-b border-slate-800/60">
+                  <div className="flex items-center gap-2">
+                    <Activity className="w-4 h-4 text-emerald-400" />
+                    <span className="text-sm font-bold text-white">
+                      【{currentRamp.exchangeName}】實體匝道號誌放行
+                    </span>
+                  </div>
+                  <div
+                    className={`px-2.5 py-1 rounded-full text-xs font-bold border flex items-center gap-1.5 ${currentBadge.bg}`}
+                  >
+                    <span className={`w-2 h-2 rounded-full ${currentBadge.dot}`} />
+                    <span>{currentRamp.intensityLabel}</span>
+                  </div>
+                </div>
 
-        {/* 右側卡片：頭城 30.5K 主線號誌管制 (Realistic Physical Mainline Meter Light) */}
-        <div className="lg:col-span-6 bg-slate-950/80 border border-slate-800/90 rounded-2xl p-5 space-y-4 flex flex-col justify-between shadow-lg">
-          <div>
-            <div className="flex items-center justify-between pb-3 border-b border-slate-800/60">
-              <div className="flex items-center gap-2">
-                <ShieldAlert className="w-4 h-4 text-cyan-400" />
-                <span className="text-sm font-bold text-white">
-                  頭城 30.5K 主線實體號誌 (雪隧南口前)
-                </span>
+                <div className="grid grid-cols-1 sm:grid-cols-12 gap-4 items-center pt-3">
+                  <div className="sm:col-span-5 flex justify-center">
+                    <RealisticTrafficLight
+                      currentPhase={rampPhase}
+                      secondsRemaining={rampRemainingSec}
+                      title="入口匝道號誌"
+                      subtitle={`放行週期 ${currentRamp.cycleSec}s`}
+                    />
+                  </div>
+
+                  <div className="sm:col-span-7 space-y-2.5">
+                    <div className="bg-slate-900/90 border border-slate-800 rounded-xl p-3 space-y-2">
+                      <div className="text-[11px] text-slate-400 flex items-center justify-between">
+                        <span>高公局儀控放行速率</span>
+                        <span className="font-mono font-bold text-cyan-300 text-xs">
+                          {currentRamp.vph} vph
+                        </span>
+                      </div>
+                      <div className="grid grid-cols-2 gap-2">
+                        <div className="bg-slate-950 rounded-lg p-2 border border-slate-800 text-center">
+                          <div className="text-[10px] text-slate-400">綠燈 (一綠一車)</div>
+                          <div className="text-sm font-mono font-bold text-emerald-400">
+                            {currentRamp.greenSec} 秒
+                          </div>
+                        </div>
+                        <div className="bg-slate-950 rounded-lg p-2 border border-slate-800 text-center">
+                          <div className="text-[10px] text-slate-400">紅燈 (阻斷等待)</div>
+                          <div className="text-sm font-mono font-bold text-rose-400">
+                            {currentRamp.redSec} 秒
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="bg-slate-900/90 border border-slate-800 rounded-xl p-3 flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <Clock className="w-4 h-4 text-amber-400" />
+                        <span className="text-xs text-slate-300 font-medium">
+                          平面排隊停等時間
+                        </span>
+                      </div>
+                      <div className="text-right">
+                        <span className="text-base font-mono font-bold text-amber-300">
+                          約 {currentRamp.queueDelayMinutes} 分鐘
+                        </span>
+                        {currentRamp.upstreamQueueLengthMeters ? (
+                          <div className="text-[10px] text-slate-400">
+                            車隊約 {currentRamp.upstreamQueueLengthMeters} 公尺
+                          </div>
+                        ) : null}
+                      </div>
+                    </div>
+                  </div>
+                </div>
               </div>
-              <div
-                className={`px-2.5 py-1 rounded-full text-xs font-bold border flex items-center gap-1.5 ${mainlineBadge.bg}`}
-              >
-                <span className={`w-2 h-2 rounded-full ${mainlineBadge.dot}`} />
-                <span>
-                  {mainlineSignal?.isMainlineMeterActive
-                    ? `主線管制中 (${mainlineSignal.intensityLabel})`
-                    : "全綠燈放行 (未啟動)"}
-                </span>
+
+              <div className="text-[11px] text-slate-400 bg-slate-900/60 p-2.5 rounded-xl border border-slate-800/60">
+                💡 <span className="text-slate-300 font-medium">時制說明：</span>
+                依據高公局一綠一車管制準則，每 {currentRamp.pulseIntervalSec} 秒釋出一輛車匯入國5主線。
+              </div>
+            </div>
+          </div>
+
+          {/* 下方卡片：三重旅行時間模型 (Three-Tier Corridor Delay Breakdown) */}
+          <div className="mt-6 bg-gradient-to-br from-slate-950 to-slate-900 border border-slate-800/90 rounded-2xl p-5 space-y-4 relative z-10 shadow-lg">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <Gauge className="w-4 h-4 text-emerald-400" />
+                <h3 className="text-sm sm:text-base font-bold text-white">
+                  【{selectedExchangeName} 出發】北上三重旅行時間精確拆解
+                </h3>
+              </div>
+              <div className="text-xs text-slate-400">
+                精準計入各瓶頸延遲，避免因「雪隧內部順暢」而誤判整體行程時間
               </div>
             </div>
 
-            {/* 實體紅綠燈與主線蓄壓狀態 */}
-            <div className="grid grid-cols-1 sm:grid-cols-12 gap-4 items-center pt-3">
-              {/* 擬真實體紅綠燈 */}
-              <div className="sm:col-span-5 flex justify-center">
-                <RealisticTrafficLight
-                  currentPhase={mainlinePhase}
-                  secondsRemaining={mainlineRemainingSec}
-                  title="主線 30.5K 號誌"
-                  subtitle={mainlineSignal?.isMainlineMeterActive ? `週期 ${mainlineSignal.cycleSec}s` : "全綠燈直通"}
-                  isMainline={true}
-                />
-              </div>
-
-              {/* 右側主線蓄壓指標 */}
-              <div className="sm:col-span-7 space-y-2.5">
-                {mainlineSignal?.isMainlineMeterActive ? (
-                  <div className="bg-rose-950/40 border border-rose-500/30 rounded-xl p-3 space-y-2 text-xs">
-                    <div className="text-rose-200 font-bold flex items-center gap-1.5">
-                      <AlertTriangle className="w-4 h-4 text-rose-400" />
-                      主線紅綠燈管制啟動中
-                    </div>
-                    <div className="grid grid-cols-2 gap-2 text-center">
-                      <div className="bg-slate-950/80 rounded-lg p-2 border border-slate-800">
-                        <div className="text-[10px] text-slate-400">主線停等延遲</div>
-                        <div className="text-sm font-mono font-bold text-rose-300">
-                          +{mainlineSignal.mainlineQueueDelayMin} 分鐘
-                        </div>
-                      </div>
-                      <div className="bg-slate-950/80 rounded-lg p-2 border border-slate-800">
-                        <div className="text-[10px] text-slate-400">回堵尾端里程</div>
-                        <div className="text-sm font-mono font-bold text-amber-300">
-                          {mainlineSignal.queueTailKm}K
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                ) : (
-                  <div className="bg-emerald-950/30 border border-emerald-500/30 rounded-xl p-4 text-center space-y-1">
-                    <div className="text-emerald-400 font-bold text-sm">
-                      ✓ 主線號誌維持全綠燈放行
-                    </div>
-                    <div className="text-xs text-slate-400">
-                      車流順暢匯入雪山隧道，無額外主線蓄壓停等延遲。
-                    </div>
-                  </div>
-                )}
-
-                <div className="bg-slate-900/90 border border-slate-800 rounded-xl p-3 flex items-center justify-between text-xs">
-                  <span className="text-slate-400">管制目的</span>
-                  <span className="text-cyan-300 font-medium">
-                    防止雪隧內部發生水力激波與容量崩潰
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3.5">
+              <div className="bg-slate-900/90 border border-slate-800/90 rounded-xl p-4 space-y-1.5 relative overflow-hidden">
+                <div className="flex items-center justify-between text-xs text-slate-400">
+                  <span className="font-bold text-slate-200">階段 1：平面匝道排隊</span>
+                  <span className="text-[10px] px-2 py-0.5 rounded bg-slate-800 text-slate-300 font-mono">
+                    Ramp Queue
                   </span>
                 </div>
+                <div className="text-2xl font-black font-mono text-amber-300">
+                  {currentThreeTier.rampQueueDelayMin} <span className="text-xs font-normal text-slate-400">分鐘</span>
+                </div>
+                <p className="text-xs text-slate-400 leading-tight">
+                  {currentRamp.exchangeName} 入口儀控停等
+                </p>
+              </div>
+
+              <div className="bg-slate-900/90 border border-slate-800/90 rounded-xl p-4 space-y-1.5 relative overflow-hidden">
+                <div className="flex items-center justify-between text-xs text-slate-400">
+                  <span className="font-bold text-slate-200">階段 2：30.5K 主線號誌</span>
+                  <span className="text-[10px] px-2 py-0.5 rounded bg-slate-800 text-slate-300 font-mono">
+                    Mainline 30.5K
+                  </span>
+                </div>
+                <div className="text-2xl font-black font-mono text-rose-300">
+                  {currentThreeTier.mainlineQueueDelayMin} <span className="text-xs font-normal text-slate-400">分鐘</span>
+                </div>
+                <p className="text-xs text-slate-400 leading-tight">
+                  雪隧南口主線蓄壓回堵停等
+                </p>
+              </div>
+
+              <div className="bg-slate-900/90 border border-slate-800/90 rounded-xl p-4 space-y-1.5 relative overflow-hidden">
+                <div className="flex items-center justify-between text-xs text-slate-400">
+                  <span className="font-bold text-slate-200">階段 3：雪隧內部通行</span>
+                  <span className="text-[10px] px-2 py-0.5 rounded bg-slate-800 text-slate-300 font-mono">
+                    Tunnel Cruise
+                  </span>
+                </div>
+                <div className="text-2xl font-black font-mono text-emerald-300">
+                  {currentThreeTier.tunnelTravelTimeMin} <span className="text-xs font-normal text-slate-400">分鐘</span>
+                </div>
+                <p className="text-xs text-slate-400 leading-tight">
+                  28K～15K 20微元積分實測通行
+                </p>
               </div>
             </div>
-          </div>
 
-          <div className="text-[11px] text-slate-400 bg-slate-900/60 p-2.5 rounded-xl border border-slate-800/60">
-            🛡️ <span className="text-slate-300 font-medium">主線機制：</span>
-            當雪隧內部流量逼近上限時，頭城 30.5K 號誌紅燈攔截主線車流，維持隧道內部穩定流速。
-          </div>
-        </div>
-      </div>
+            <div className="pt-3 border-t border-slate-800/80 flex flex-wrap items-center justify-between gap-3">
+              <div className="flex items-center gap-2.5 flex-wrap">
+                <CornerDownRight className="w-5 h-5 text-emerald-400 shrink-0" />
+                <span className="text-xs sm:text-sm text-slate-300 font-medium">
+                  從【{selectedExchangeName}】至雪隧北口 (坪林) 預估實質總耗時：
+                </span>
+                <span className="text-xl font-black font-mono text-emerald-400 bg-emerald-950/80 px-3.5 py-1 rounded-xl border border-emerald-500/40 shadow-inner">
+                  {currentThreeTier.totalTravelTimeFormatted}
+                </span>
+              </div>
 
-      {/* 下方卡片：三重旅行時間模型 (Three-Tier Corridor Delay Breakdown) */}
-      <div className="mt-6 bg-gradient-to-br from-slate-950 to-slate-900 border border-slate-800/90 rounded-2xl p-5 space-y-4 relative z-10 shadow-lg">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <div className="flex items-center gap-2">
-            <Gauge className="w-4 h-4 text-emerald-400" />
-            <h3 className="text-sm sm:text-base font-bold text-white">
-              【{selectedExchangeName} 出發】北上三重旅行時間精確拆解
-            </h3>
+              {currentThreeTier.shouldTakeAlternativeRoute && (
+                <div className="flex items-center gap-2 px-3.5 py-2 rounded-xl bg-rose-950/80 border border-rose-500/50 text-rose-200 text-xs font-semibold animate-pulse shadow-md">
+                  <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0" />
+                  <span>{currentThreeTier.detourAdvice}</span>
+                </div>
+              )}
+            </div>
           </div>
-          <div className="text-xs text-slate-400">
-            精準計入各瓶頸延遲，避免因「雪隧內部順暢」而誤判整體行程時間
-          </div>
-        </div>
-
-        {/* 三階段水平拆解條 */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-3.5">
-          {/* 第一層 */}
-          <div className="bg-slate-900/90 border border-slate-800/90 rounded-xl p-4 space-y-1.5 relative overflow-hidden">
-            <div className="flex items-center justify-between text-xs text-slate-400">
-              <span className="font-bold text-slate-200">階段 1：平面匝道排隊</span>
-              <span className="text-[10px] px-2 py-0.5 rounded bg-slate-800 text-slate-300 font-mono">
-                Ramp Queue
-              </span>
-            </div>
-            <div className="text-2xl font-black font-mono text-amber-300">
-              {currentThreeTier.rampQueueDelayMin} <span className="text-xs font-normal text-slate-400">分鐘</span>
-            </div>
-            <p className="text-xs text-slate-400 leading-tight">
-              {currentRamp.exchangeName} 入口儀控停等
-            </p>
-          </div>
-
-          {/* 第二層 */}
-          <div className="bg-slate-900/90 border border-slate-800/90 rounded-xl p-4 space-y-1.5 relative overflow-hidden">
-            <div className="flex items-center justify-between text-xs text-slate-400">
-              <span className="font-bold text-slate-200">階段 2：30.5K 主線號誌</span>
-              <span className="text-[10px] px-2 py-0.5 rounded bg-slate-800 text-slate-300 font-mono">
-                Mainline 30.5K
-              </span>
-            </div>
-            <div className="text-2xl font-black font-mono text-rose-300">
-              {currentThreeTier.mainlineQueueDelayMin} <span className="text-xs font-normal text-slate-400">分鐘</span>
-            </div>
-            <p className="text-xs text-slate-400 leading-tight">
-              雪隧南口主線蓄壓回堵停等
-            </p>
-          </div>
-
-          {/* 第三層 */}
-          <div className="bg-slate-900/90 border border-slate-800/90 rounded-xl p-4 space-y-1.5 relative overflow-hidden">
-            <div className="flex items-center justify-between text-xs text-slate-400">
-              <span className="font-bold text-slate-200">階段 3：雪隧內部通行</span>
-              <span className="text-[10px] px-2 py-0.5 rounded bg-slate-800 text-slate-300 font-mono">
-                Tunnel Cruise
-              </span>
-            </div>
-            <div className="text-2xl font-black font-mono text-emerald-300">
-              {currentThreeTier.tunnelTravelTimeMin} <span className="text-xs font-normal text-slate-400">分鐘</span>
-            </div>
-            <p className="text-xs text-slate-400 leading-tight">
-              28K～15K 20微元積分實測通行
-            </p>
-          </div>
-        </div>
-
-        {/* 總結計算 Bar 與 避塞建議 */}
-        <div className="pt-3 border-t border-slate-800/80 flex flex-wrap items-center justify-between gap-3">
-          <div className="flex items-center gap-2.5 flex-wrap">
-            <CornerDownRight className="w-5 h-5 text-emerald-400 shrink-0" />
-            <span className="text-xs sm:text-sm text-slate-300 font-medium">
-              從【{selectedExchangeName}】至雪隧北口 (坪林) 預估實質總耗時：
-            </span>
-            <span className="text-xl font-black font-mono text-emerald-400 bg-emerald-950/80 px-3.5 py-1 rounded-xl border border-emerald-500/40 shadow-inner">
-              {currentThreeTier.totalTravelTimeFormatted}
-            </span>
-          </div>
-
-          {/* 智慧避塞替代道路提示 */}
-          {currentThreeTier.shouldTakeAlternativeRoute && (
-            <div className="flex items-center gap-2 px-3.5 py-2 rounded-xl bg-rose-950/80 border border-rose-500/50 text-rose-200 text-xs font-semibold animate-pulse shadow-md">
-              <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0" />
-              <span>{currentThreeTier.detourAdvice}</span>
-            </div>
-          )}
-        </div>
-      </div>
+        </>
+      )}
 
       {/* 演算法數學解析彈窗 (Theory Modal) */}
       {showTheoryModal && (
