@@ -22,13 +22,24 @@ export const MAINLINE_CAPACITY_VDS: DetectorStationConfig[] = [
   { detectorId: "VD-N5-S-15.203-M", mileageKm: 15.203, direction: "S", locationName: "雪隧北口 15.2K (南下容量判定 VD)", tunnelSection: "隧道北口" },
 ];
 
-// 2. 【頭城 30.5K 主線號誌 VD】：30.5K 實體紅綠燈斷面偵測器
+// 2. 【頭城 30.5K 主線號誌 VD 與上游對照組 VD】：綁定上游需求 VD 與號誌斷面 VD
+export const TOUCHENG_MAINLINE_UPSTREAM_VD_ID = "VD-N5-N-32.000-M";
+export const TOUCHENG_MAINLINE_METER_VD_ID = "VD-N5-N-30.500-M";
+
 export const TOUCHENG_MAINLINE_SIGNAL_VD: DetectorStationConfig = {
-  detectorId: "VD-N5-N-30.500-M",
+  detectorId: TOUCHENG_MAINLINE_METER_VD_ID,
   mileageKm: 30.5,
   direction: "N",
-  locationName: "頭城 30.5K 主線號誌管制斷面偵測器",
+  locationName: "頭城 30.5K 主線號誌管制斷面偵測器 (Q_meter, V_meter)",
   tunnelSection: "主線號誌管制點",
+};
+
+export const TOUCHENG_MAINLINE_UPSTREAM_VD: DetectorStationConfig = {
+  detectorId: TOUCHENG_MAINLINE_UPSTREAM_VD_ID,
+  mileageKm: 32.0,
+  direction: "N",
+  locationName: "頭城主線上游需求偵測器 (Q_upstream, V_upstream)",
+  tunnelSection: "主線上游引道",
 };
 
 // 3. 【各入口匝道實測 VD】：蘇澳、羅東、宜蘭、頭城各交流道之入口匝道偵測器 (Passage 通過 & Queue 隊列)

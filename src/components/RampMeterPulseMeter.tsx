@@ -105,8 +105,8 @@ function RealisticTrafficLight({
               <div className="absolute top-1 left-2 w-4 h-2 bg-white/40 rounded-full blur-[1px] transform -rotate-45 pointer-events-none" />
               <div className="absolute inset-0 bg-[radial-gradient(#000_1px,transparent_1px)] [background-size:4px_4px] opacity-30" />
               {currentPhase === "GREEN" && (
-                <span className="text-white font-mono font-black text-sm drop-shadow-[0_2px_4px_rgba(0,0,0,0.8)] z-10">
-                  {secondsRemaining}s
+                <span className="text-white font-mono font-black text-xs drop-shadow-[0_2px_4px_rgba(0,0,0,0.8)] z-10">
+                  {secondsRemaining > 0 ? `${secondsRemaining}s` : "暢行"}
                 </span>
               )}
             </div>
@@ -118,14 +118,16 @@ function RealisticTrafficLight({
       <div className="mt-3 text-center">
         <span
           className={`inline-block px-3 py-1 rounded-full text-xs font-black tracking-wider shadow-md ${
-            currentPhase === "GREEN"
+            currentPhase === "GREEN" && secondsRemaining === 0
+              ? "bg-emerald-600 text-white shadow-emerald-950/60"
+              : currentPhase === "GREEN"
               ? "bg-emerald-500 text-white shadow-emerald-900/50"
               : currentPhase === "YELLOW"
               ? "bg-amber-400 text-neutral-950 shadow-amber-900/50"
               : "bg-rose-600 text-white shadow-rose-900/50"
           }`}
         >
-          {currentPhase === "GREEN" ? "綠燈 2s 放行" : currentPhase === "YELLOW" ? "黃燈 清空" : "紅燈 停等"}
+          {secondsRemaining === 0 ? "🟢 全線暢通 (暢行常開)" : currentPhase === "GREEN" ? "綠燈 2s 放行" : currentPhase === "YELLOW" ? "黃燈 清空" : "紅燈 停等"}
         </span>
       </div>
     </div>
@@ -160,19 +162,19 @@ export default function RampMeterPulseMeter({
   const currentRamp: SignalTimingResult = isMainlineSelected
     ? {
         exchangeName: "頭城 30.5K 主線號誌",
-        isMetered: mainlineSignal?.isMainlineMeterActive ?? true,
-        cycleSec: mainlineSignal?.cycleSec || 35,
-        greenSec: mainlineSignal?.greenSec || 15,
-        redSec: (mainlineSignal?.cycleSec || 35) - (mainlineSignal?.greenSec || 15) - 2,
+        isMetered: mainlineSignal?.isMainlineMeterActive ?? false,
+        cycleSec: mainlineSignal?.isMainlineMeterActive ? (mainlineSignal?.cycleSec || 35) : 0,
+        greenSec: mainlineSignal?.isMainlineMeterActive ? (mainlineSignal?.greenSec || 2) : 0,
+        redSec: mainlineSignal?.isMainlineMeterActive ? (mainlineSignal?.redSec || 33) : 0,
         vph: 1800,
-        queueDelayMinutes: mainlineSignal?.mainlineQueueDelayMin || 3,
-        intensity: mainlineSignal?.intensity || "MODERATE",
-        intensityLabel: mainlineSignal?.intensityLabel || "主線儀控中 (黃)",
-        intensityColorClass: "text-amber-400 bg-amber-950/60 border-amber-500/40",
-        pulseIntervalSec: mainlineSignal?.cycleSec || 35,
-        description: "主線紅綠燈管制 (頭城 30.5K)",
-        upstreamQueueLengthMeters: 350,
-        rampOccupancy: mainlineSignal?.kMainOccupancy || 15,
+        queueDelayMinutes: mainlineSignal?.isMainlineMeterActive ? (mainlineSignal?.mainlineQueueDelayMin || 3) : 0,
+        intensity: mainlineSignal?.intensity || "OFF",
+        intensityLabel: mainlineSignal?.isMainlineMeterActive ? "🔴 主線儀控管制中" : "🟢 主線開放通行 (未啟動管制)",
+        intensityColorClass: mainlineSignal?.isMainlineMeterActive ? "text-amber-400 bg-amber-950/60 border-amber-500/40" : "text-emerald-400 bg-emerald-950/60 border-emerald-500/30",
+        pulseIntervalSec: mainlineSignal?.isMainlineMeterActive ? (mainlineSignal?.cycleSec || 35) : 0,
+        description: mainlineSignal?.description || "頭城 30.5K 主線號誌狀態",
+        upstreamQueueLengthMeters: mainlineSignal?.isMainlineMeterActive ? Math.round((mainlineSignal?.upstreamQueueLengthKm || 1.5) * 1000) : 0,
+        rampOccupancy: mainlineSignal?.kMainOccupancy || 12,
       }
     : (meteringState?.rampSignals?.find((r) => r.exchangeName === selectedExchangeName) ||
         meteringState?.rampSignals?.[0] || {
@@ -196,11 +198,11 @@ export default function RampMeterPulseMeter({
     ? {
         originExchangeName: "頭城 30.5K 主線",
         rampQueueDelayMin: 0,
-        mainlineQueueDelayMin: mainlineSignal?.mainlineQueueDelayMin || 3,
+        mainlineQueueDelayMin: mainlineSignal?.isMainlineMeterActive ? (mainlineSignal?.mainlineQueueDelayMin || 3) : 0,
         tunnelTravelTimeMin: meteringState?.tunnelTravelTimeMin || 11,
-        totalTravelTimeMin: (mainlineSignal?.mainlineQueueDelayMin || 3) + (meteringState?.tunnelTravelTimeMin || 11),
-        totalTravelTimeFormatted: `${(mainlineSignal?.mainlineQueueDelayMin || 3) + (meteringState?.tunnelTravelTimeMin || 11)} 分鐘`,
-        detourAdvice: "目前行駛主線 30.5K 號誌管制點，請配合號誌指示循序通過。",
+        totalTravelTimeMin: (mainlineSignal?.isMainlineMeterActive ? (mainlineSignal?.mainlineQueueDelayMin || 3) : 0) + (meteringState?.tunnelTravelTimeMin || 11),
+        totalTravelTimeFormatted: `${(mainlineSignal?.isMainlineMeterActive ? (mainlineSignal?.mainlineQueueDelayMin || 3) : 0) + (meteringState?.tunnelTravelTimeMin || 11)} 分鐘`,
+        detourAdvice: mainlineSignal?.isMainlineMeterActive ? "目前主線實施儀控管制，請配合號誌指示減速慢行。" : "主線車流順暢，未啟動儀控管制，全線開放通行。",
         shouldTakeAlternativeRoute: false,
         suggestedAlternativeRoute: "國道 5 號主線",
       }
@@ -232,6 +234,9 @@ export default function RampMeterPulseMeter({
     return () => clearInterval(timer);
   }, []);
 
+  const isMetered = currentRamp.isMetered ?? true;
+  const isOff = !isMetered || currentRamp.intensity === "OFF" || currentRamp.cycleSec === 0;
+
   const cycle = Math.max(3, currentRamp.cycleSec || 6);
   const green = 2; // 固定綠燈 2 秒
   const yellow = 1;
@@ -241,7 +246,10 @@ export default function RampMeterPulseMeter({
   let currentPhase: "GREEN" | "YELLOW" | "RED" = "GREEN";
   let remainingSec = 0;
 
-  if (currentSecInCycle < green) {
+  if (isOff) {
+    currentPhase = "GREEN";
+    remainingSec = 0;
+  } else if (currentSecInCycle < green) {
     currentPhase = "GREEN";
     remainingSec = green - currentSecInCycle;
   } else if (currentSecInCycle < green + yellow) {

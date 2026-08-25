@@ -1,6 +1,6 @@
 import { RawApiDetectorRecord, Direction } from "../types";
 import { detectMeteringEventsFromPayload, ExtractedLiveEvent } from "../services/liveEventsEngine";
-import { MAINLINE_CAPACITY_VDS, ON_RAMP_MEASURED_VDS } from "../data/detectorConfig";
+import { MAINLINE_CAPACITY_VDS, ON_RAMP_MEASURED_VDS, TOUCHENG_MAINLINE_UPSTREAM_VD_ID, TOUCHENG_MAINLINE_METER_VD_ID } from "../data/detectorConfig";
 
 export type MeteringIntensity = "SMOOTH" | "MODERATE" | "STRICT" | "OFF";
 
@@ -137,6 +137,26 @@ export function calculateRampSignalTimingWithDualTrack(
   let isStrictMainline = mainlineVMain < 45 || mainlineOcc > 25;
   let isSmoothMainline = mainlineVMain >= 60 && mainlineOcc < 18;
 
+  // 如果主線順暢且匝道無壅塞 (occRamp < 18 且非嚴格主線)，則不實施匝道儀控 (全線暢通 / 暢行常開)
+  if (isSmoothMainline && occRamp < 18) {
+    return {
+      exchangeName,
+      isMetered: false,
+      cycleSec: 0,
+      greenSec: 0,
+      redSec: 0,
+      vph: qRamp,
+      queueDelayMinutes: 0,
+      intensity: "OFF",
+      intensityLabel: "🟢 暢行常開 (未啟動儀控)",
+      intensityColorClass: "text-emerald-400 bg-emerald-950/60 border-emerald-500/30",
+      pulseIntervalSec: 0,
+      description: "主線與匝道交通順暢，未啟動匝道儀控，全線常態開放通行",
+      upstreamQueueLengthMeters: 0,
+      rampOccupancy: parseFloat(occRamp.toFixed(1)),
+    };
+  }
+
   // 3. 匝道實測 VD -> 動態計算實體放行秒數與排隊時間
   // T_cycle = 3600 / max(q_ramp, 100)
   let tCycle = Math.round(3600 / Math.max(qRamp, 100));
@@ -203,7 +223,7 @@ export function calculateRampSignalTimingWithDualTrack(
 
 /**
  * 頭城 30.5K 北向主線號誌管制 (Mainline Metering) 狀態與回堵逆推演算法
- * 結合主線容量判定 VD 與即時事件通報
+ * 結合主線雙 VD 差分判別演算法 (上游需求 VD vs 號誌斷面 VD)
  */
 export function estimateTouchengMainlineMetering(
   detectors: RawApiDetectorRecord[],
@@ -234,40 +254,66 @@ export function estimateTouchengMainlineMetering(
 
   const eventCheck = detectMeteringEventsFromPayload(events);
 
-  // 利用主線容量判定 VD (MAINLINE_CAPACITY_VDS 或 28K~34K 範圍)
-  const mainlineVds = detectors.filter(
-    (d) =>
-      d.direction === "N" &&
-      (d.mileageKm >= 28.0 && d.mileageKm <= 34.0) ||
-      MAINLINE_CAPACITY_VDS.some((mv) => mv.detectorId === d.detectorId)
+  // 1. 尋找上游需求 VD 與號誌斷面 VD
+  const upstreamVd = detectors.find(
+    (d) => d.detectorId === TOUCHENG_MAINLINE_UPSTREAM_VD_ID || Math.abs(d.mileageKm - 32.0) <= 0.8
+  );
+  const meterVd = detectors.find(
+    (d) => d.detectorId === TOUCHENG_MAINLINE_METER_VD_ID || Math.abs(d.mileageKm - 30.5) <= 0.3
   );
 
-  let vMain = 75.0;
-  let kMainOccupancy = 12.0;
+  let qUpstream = 1800;
+  let vUpstream = 80.0;
+  let qMeter = 1600;
+  let vMeter = 75.0;
+  let occupancy30_5K = 12.0;
 
-  if (mainlineVds.length > 0) {
-    const speeds: number[] = [];
-    const occs: number[] = [];
-    for (const vd of mainlineVds) {
-      if (Array.isArray(vd.lanes)) {
-        for (const l of vd.lanes) {
-          if (typeof l.speedKmh === "number" && l.speedKmh > 0) speeds.push(l.speedKmh);
-          if (typeof l.occupancyPercent === "number" && l.occupancyPercent >= 0) occs.push(l.occupancyPercent);
-        }
+  if (upstreamVd && Array.isArray(upstreamVd.lanes)) {
+    let volSum = 0;
+    let speedSum = 0;
+    let count = 0;
+    for (const l of upstreamVd.lanes) {
+      if (typeof l.flowVehPerHour === "number" && l.flowVehPerHour > 0) volSum += l.flowVehPerHour;
+      if (typeof l.speedKmh === "number" && l.speedKmh > 0) {
+        speedSum += l.speedKmh;
+        count++;
       }
     }
-    if (speeds.length > 0) {
-      vMain = speeds.reduce((a, b) => a + b, 0) / speeds.length;
+    if (volSum > 100) qUpstream = volSum;
+    if (count > 0) vUpstream = speedSum / count;
+  }
+
+  if (meterVd && Array.isArray(meterVd.lanes)) {
+    let volSum = 0;
+    let speedSum = 0;
+    let occSum = 0;
+    let count = 0;
+    for (const l of meterVd.lanes) {
+      if (typeof l.flowVehPerHour === "number" && l.flowVehPerHour > 0) volSum += l.flowVehPerHour;
+      if (typeof l.speedKmh === "number" && l.speedKmh > 0) {
+        speedSum += l.speedKmh;
+        count++;
+      }
+      if (typeof l.occupancyPercent === "number" && l.occupancyPercent >= 0) {
+        occSum += l.occupancyPercent;
+        count++;
+      }
     }
-    if (occs.length > 0) {
-      kMainOccupancy = Math.max(...occs);
+    if (volSum > 100) qMeter = volSum;
+    if (count > 0) {
+      vMeter = speedSum / count;
+      occupancy30_5K = occSum / Math.max(1, meterVd.lanes.length);
     }
   }
 
-  // 規則判定：若 V_main < 45 km/h 或主線佔有率 > 25% -> 觸發高強度主線號誌管制
+  // 2. 計算流量截斷差 Delta_Q 與車速差
+  const deltaQ = qUpstream - qMeter;
+  const speedDrop = vUpstream - vMeter;
+
+  // 3. 判定邏輯：if ((Delta_Q > 250 && V_meter < 45) || Occupancy_30_5K > 22%)
   const isTriggeredByEvent = eventCheck.hasMainlineMeterEvent;
-  const isTriggeredByVd = vMain < 48 || kMainOccupancy > 22;
-  const isMainlineMeterActive = isTriggeredByEvent || isTriggeredByVd;
+  const isTriggeredByDiff = (deltaQ > 250 && vMeter < 45) || occupancy30_5K > 22;
+  const isMainlineMeterActive = isTriggeredByEvent || isTriggeredByDiff;
 
   if (!isMainlineMeterActive) {
     return {
@@ -278,57 +324,39 @@ export function estimateTouchengMainlineMetering(
       greenSec: 0,
       redSec: 0,
       intensity: "OFF",
-      intensityLabel: "未啟動管制",
-      intensityColorClass: "text-slate-400 bg-slate-800/60 border-slate-700/40",
+      intensityLabel: "🟢 主線開放通行 (未啟動管制)",
+      intensityColorClass: "text-emerald-400 bg-emerald-950/60 border-emerald-500/30",
       mainlineQueueDelayMin: 0,
       upstreamQueueLengthKm: 0,
       queueTailKm: 30.5,
-      vMain: parseFloat(vMain.toFixed(1)),
-      kMainOccupancy: parseFloat(kMainOccupancy.toFixed(1)),
-      description: "主線流速順暢 (>= 50 km/h)，號誌全綠燈未攔截",
+      vMain: parseFloat(vMeter.toFixed(1)),
+      kMainOccupancy: parseFloat(occupancy30_5K.toFixed(1)),
+      description: `上游流量 ${Math.round(qUpstream)} vs 斷面流量 ${Math.round(qMeter)} (ΔQ: ${Math.round(deltaQ)}) | 斷面車速: ${Math.round(vMeter)} km/h`,
     };
   }
 
-  let cycleSec = 35;
-  let greenSec = 15;
-  let redSec = 20;
-  let intensity: MeteringIntensity = "MODERATE";
-  let intensityLabel = "常態調控 (黃)";
-  let intensityColorClass = "text-amber-400 bg-amber-950/60 border-amber-500/40";
-  let mainlineQueueDelayMin = 6;
-  let upstreamQueueLengthKm = 1.5;
+  // 主線管制啟動中
+  let tCycle = Math.round(3600 / Math.max(qMeter, 150));
+  const cycleSec = Math.max(10, Math.min(60, tCycle));
+  const greenSec = 2; // 固定綠燈 2 秒
+  const redSec = Math.max(1, cycleSec - greenSec);
 
-  if (vMain < 30 || kMainOccupancy > 32 || (eventCheck.mainlineEventDetail?.isStrict)) {
-    cycleSec = 60;
-    greenSec = 15;
-    redSec = 45;
+  let intensity: MeteringIntensity = "MODERATE";
+  let intensityLabel = "🔴 主線儀控管制中";
+  let intensityColorClass = "text-amber-400 bg-amber-950/60 border-amber-500/40";
+  let mainlineQueueDelayMin = 8;
+  let upstreamQueueLengthKm = 1.8;
+
+  if (vMeter < 30 || occupancy30_5K > 30) {
     intensity = "STRICT";
-    intensityLabel = "嚴格阻斷 (紅)";
+    intensityLabel = "🔴 主線嚴格儀控 (紅)";
     intensityColorClass = "text-rose-400 bg-rose-950/60 border-rose-500/40";
     mainlineQueueDelayMin = 18;
     upstreamQueueLengthKm = 3.2;
-  } else if (vMain < 48 || kMainOccupancy > 22) {
-    cycleSec = 40;
-    greenSec = 18;
-    redSec = 22;
-    intensity = "MODERATE";
-    intensityLabel = "常態調控 (黃)";
-    intensityColorClass = "text-amber-400 bg-amber-950/60 border-amber-500/40";
-    mainlineQueueDelayMin = 8;
-    upstreamQueueLengthKm = 1.8;
-  } else {
-    cycleSec = 25;
-    greenSec = 15;
-    redSec = 10;
-    intensity = "SMOOTH";
-    intensityLabel = "微幅調控 (綠)";
-    intensityColorClass = "text-emerald-400 bg-emerald-950/60 border-emerald-500/30";
-    mainlineQueueDelayMin = 3;
-    upstreamQueueLengthKm = 0.6;
   }
 
   const queueTailKm = parseFloat((30.5 + upstreamQueueLengthKm).toFixed(1));
-  const description = `主線流速 ${Math.round(vMain)} km/h (佔有率 ${Math.round(kMainOccupancy)}%) ‧ 紅燈 ${redSec}s / 綠燈 ${greenSec}s`;
+  const description = `上游流量 ${Math.round(qUpstream)} vs 斷面流量 ${Math.round(qMeter)} (ΔQ: ${Math.round(deltaQ)}) | 斷面車速: ${Math.round(vMeter)} km/h`;
 
   return {
     isMainlineMeterActive: true,
@@ -343,8 +371,8 @@ export function estimateTouchengMainlineMetering(
     mainlineQueueDelayMin,
     upstreamQueueLengthKm,
     queueTailKm,
-    vMain: parseFloat(vMain.toFixed(1)),
-    kMainOccupancy: parseFloat(kMainOccupancy.toFixed(1)),
+    vMain: parseFloat(vMeter.toFixed(1)),
+    kMainOccupancy: parseFloat(occupancy30_5K.toFixed(1)),
     description,
   };
 }
