@@ -21,6 +21,239 @@ function getRedis(): Redis | null {
   return null;
 }
 
+// VDLaneData interface and calculateAdvancedLaneRecommendation
+export interface VDLaneData {
+  speedKmh: number;
+  volumeS: number;
+  volumeL: number;
+  volumeT: number;
+}
+
+export function calculateAdvancedLaneRecommendation(
+  innerLane: VDLaneData,
+  outerLane: VDLaneData,
+  isWeekendPeak: boolean
+) {
+  let effectiveInnerSpeed = innerLane.speedKmh;
+  let effectiveOuterSpeed = outerLane.speedKmh;
+  let outerPenaltyReasons: string[] = [];
+
+  const totalOuterVolume = outerLane.volumeS + outerLane.volumeL + outerLane.volumeT;
+  const truckRatio = totalOuterVolume > 0 ? outerLane.volumeT / totalOuterVolume : 0;
+  const busRatio = totalOuterVolume > 0 ? outerLane.volumeL / totalOuterVolume : 0;
+
+  // 規則 1：大貨車爬坡壓速阻抗
+  if (truckRatio > 0.03) {
+    const truckPenalty = Math.min(8.0, truckRatio * 30);
+    effectiveOuterSpeed -= truckPenalty;
+    outerPenaltyReasons.push(`卡車佔比達 ${(truckRatio * 100).toFixed(0)}% 易受爬坡壓速`);
+  }
+
+  // 規則 2：假日大客車專用道交織阻抗
+  if (isWeekendPeak && busRatio > 0.10) {
+    effectiveOuterSpeed -= 3.5;
+    outerPenaltyReasons.push("尖峰客運高頻匯流");
+  }
+
+  effectiveOuterSpeed = Math.max(0, effectiveOuterSpeed);
+  const recommendInner = effectiveInnerSpeed >= effectiveOuterSpeed;
+
+  let voiceText = "";
+  if (recommendInner) {
+    if (outerPenaltyReasons.length > 0) {
+      voiceText = `即將進入雪山隧道，目前外側${outerPenaltyReasons.join("且")}，系統推薦行駛內側車道。`;
+    } else {
+      voiceText = `即將進入雪山隧道，目前內側實測流速較快，推薦行駛內側車道。`;
+    }
+  } else {
+    voiceText = `即將進入雪山隧道，目前外側無重車阻擋且流速優於內側，系統推薦行駛外側車道。`;
+  }
+
+  return {
+    recommendedLane: recommendInner ? "內側車道" : "外側車道",
+    effectiveInnerSpeed: Number(effectiveInnerSpeed.toFixed(1)),
+    effectiveOuterSpeed: Number(effectiveOuterSpeed.toFixed(1)),
+    truckRatio: Number(truckRatio.toFixed(3)),
+    busRatio: Number(busRatio.toFixed(3)),
+    voiceText: voiceText,
+  };
+}
+
+// 全域車道推薦快取（供所有 API 端點如 /api/dataset、/api/lane-recommendation 隨時讀取）
+let globalLatestLaneRecommendation: any = {
+  recommendedLane: "內側車道",
+  effectiveInnerSpeed: 75.0,
+  effectiveOuterSpeed: 72.0,
+  truckRatio: 0.015,
+  busRatio: 0.04,
+  voiceText: "即將進入雪山隧道，目前內側實測流速較快，推薦行駛內側車道。",
+  timestamp: new Date().toISOString(),
+};
+
+// 輔助函式：自 TDX VD 數據中解析北向雪隧入口（28.1K ~ 25K）的各車道車速與車種流量 (S/L/T)
+export function extractNorthEntranceVdData(vdPayload: any): { innerLane: VDLaneData; outerLane: VDLaneData; vdCount: number } {
+  const rawList: any[] = Array.isArray(vdPayload?.VDLives)
+    ? vdPayload.VDLives
+    : Array.isArray(vdPayload)
+    ? vdPayload
+    : Array.isArray(vdPayload?.data)
+    ? vdPayload.data
+    : [];
+
+  let innerSpeeds: number[] = [];
+  let outerSpeeds: number[] = [];
+  let innerVolS = 0;
+  let innerVolL = 0;
+  let innerVolT = 0;
+  let outerVolS = 0;
+  let outerVolL = 0;
+  let outerVolT = 0;
+  let matchedVdCount = 0;
+
+  for (const item of rawList) {
+    if (!item) continue;
+    const vdid = String(item.VDID || item.detectorId || "");
+
+    // 檢查是否為北向 (N)
+    const isNorth =
+      /-N-|-NB-|-N(?=[-_]|$)|北向|北上|\bNB\b/i.test(vdid) ||
+      String(item.Direction || "").toUpperCase() === "N" ||
+      String(item.Direction || "").toUpperCase() === "NB";
+
+    if (!isNorth) continue;
+
+    // 提取里程數 (聚焦雪隧北向入口 28.1K ~ 25K)
+    let mileageKm = 0;
+    if (typeof item.Mileage === "number") mileageKm = item.Mileage;
+    else if (typeof item.mileageKm === "number") mileageKm = item.mileageKm;
+    else {
+      const match = vdid.match(/(\d+(?:\.\d+)?)/);
+      if (match) mileageKm = parseFloat(match[1]);
+    }
+
+    // 判斷是否位於北向入口區間 (24.8K ~ 28.5K)
+    const isInNorthEntranceBounds =
+      (mileageKm >= 24.8 && mileageKm <= 28.5) ||
+      vdid.includes("28.1") ||
+      vdid.includes("28.0") ||
+      vdid.includes("27.5") ||
+      vdid.includes("27.0") ||
+      vdid.includes("26.0") ||
+      vdid.includes("25.0");
+
+    if (!isInNorthEntranceBounds && mileageKm > 0) continue;
+
+    matchedVdCount++;
+
+    // 解析 LinkFlows[0].Lanes
+    const lanes =
+      (Array.isArray(item.LinkFlows) && item.LinkFlows[0] && Array.isArray(item.LinkFlows[0].Lanes)
+        ? item.LinkFlows[0].Lanes
+        : Array.isArray(item.Lanes)
+        ? item.Lanes
+        : Array.isArray(item.lanes)
+        ? item.lanes
+        : []) as any[];
+
+    lanes.forEach((laneObj: any, lIdx: number) => {
+      // 交通部 TDX 國道車道劃分標準：
+      // LaneID: 1 -> 第 1 車道（最內側車道）
+      // LaneID: 2+ -> 第 2 車道/外側車道
+      // 0-indexed fallback: 若 LaneID 為 0 或使用陣列 index 0 則視為內側車道
+      let isInner = false;
+      if (laneObj.LaneID !== undefined && laneObj.LaneID !== null) {
+        const numId = Number(laneObj.LaneID);
+        isInner = numId === 1 || numId === 0;
+      } else {
+        isInner = lIdx === 0;
+      }
+
+      let laneSpeed = typeof laneObj.Speed === "number" && laneObj.Speed > 0 ? laneObj.Speed : 0;
+      let vS = 0;
+      let vL = 0;
+      let vT = 0;
+
+      if (Array.isArray(laneObj.Vehicles)) {
+        let weightedSpeedSum = 0;
+        let totalVeh = 0;
+
+        laneObj.Vehicles.forEach((v: any) => {
+          const vol = typeof v.Volume === "number" ? v.Volume : 0;
+          const spd = typeof v.Speed === "number" ? v.Speed : 0;
+          const vType = String(v.VehicleType || "").toUpperCase();
+
+          if (vType === "S" || vType === "SMALL" || vType === "1" || vType === "CAR") {
+            vS += vol;
+          } else if (vType === "L" || vType === "LARGE" || vType === "2" || vType === "BUS") {
+            vL += vol;
+          } else if (vType === "T" || vType === "TRUCK" || vType === "3" || vType === "TRAILER" || vType === "TT") {
+            vT += vol;
+          } else {
+            vS += vol; // 預設歸為小型車
+          }
+
+          if (vol > 0 && spd > 0) {
+            weightedSpeedSum += vol * spd;
+            totalVeh += vol;
+          }
+        });
+
+        if (laneSpeed <= 0 && totalVeh > 0) {
+          laneSpeed = Math.round(weightedSpeedSum / totalVeh);
+        }
+      } else if (typeof laneObj.Volume === "number") {
+        vS = laneObj.Volume;
+      }
+
+      if (isInner) {
+        if (laneSpeed > 0) innerSpeeds.push(laneSpeed);
+        innerVolS += vS;
+        innerVolL += vL;
+        innerVolT += vT;
+      } else {
+        if (laneSpeed > 0) outerSpeeds.push(laneSpeed);
+        outerVolS += vS;
+        outerVolL += vL;
+        outerVolT += vT;
+      }
+    });
+  }
+
+  const avgInnerSpeed = innerSpeeds.length > 0 ? innerSpeeds.reduce((a, b) => a + b, 0) / innerSpeeds.length : 75;
+  const avgOuterSpeed = outerSpeeds.length > 0 ? outerSpeeds.reduce((a, b) => a + b, 0) / outerSpeeds.length : 72;
+
+  return {
+    innerLane: {
+      speedKmh: Math.round(avgInnerSpeed * 10) / 10,
+      volumeS: innerVolS,
+      volumeL: innerVolL,
+      volumeT: innerVolT,
+    },
+    outerLane: {
+      speedKmh: Math.round(avgOuterSpeed * 10) / 10,
+      volumeS: outerVolS,
+      volumeL: outerVolL,
+      volumeT: outerVolT,
+    },
+    vdCount: matchedVdCount,
+  };
+}
+
+// 判定是否為週日或連假 13:00~21:00 尖峰時段 (台北時間)
+export function isWeekendPeakTime(date: Date = new Date()): boolean {
+  try {
+    const tzString = date.toLocaleString("en-US", { timeZone: "Asia/Taipei" });
+    const localDate = new Date(tzString);
+    const day = localDate.getDay(); // 0 = Sunday, 6 = Saturday
+    const hour = localDate.getHours();
+    return (day === 0 || day === 6) && hour >= 13 && hour <= 21;
+  } catch {
+    const day = date.getDay();
+    const hour = date.getHours();
+    return (day === 0 || day === 6) && hour >= 13 && hour <= 21;
+  }
+}
+
 async function startServer() {
   const app = express();
   const PORT = 3000;
@@ -126,7 +359,18 @@ async function startServer() {
       if (redis) {
         data = (await redis.get("dataset_records")) || (await redis.get("hsuehshan:shared:dataset")) || data || [];
       }
-      return res.json({ success: true, data: data || [] });
+      return res.json({
+        success: true,
+        data: data || [],
+        // 頂層相容附加即時車道推薦（方便 iOS 捷徑、語音助理直接解析頂層欄位）
+        voiceText: globalLatestLaneRecommendation?.voiceText || "即將進入雪山隧道，系統推薦行駛內側車道。",
+        recommendedLane: globalLatestLaneRecommendation?.recommendedLane || "內側車道",
+        effectiveInnerSpeed: globalLatestLaneRecommendation?.effectiveInnerSpeed || 75.0,
+        effectiveOuterSpeed: globalLatestLaneRecommendation?.effectiveOuterSpeed || 72.0,
+        truckRatio: globalLatestLaneRecommendation?.truckRatio || 0,
+        busRatio: globalLatestLaneRecommendation?.busRatio || 0,
+        updateTime: globalLatestLaneRecommendation?.timestamp || new Date().toISOString(),
+      });
     } catch (e: any) {
       return res.json({ success: false, error: e.message });
     }
@@ -447,14 +691,71 @@ async function startServer() {
     }
   });
 
-  // Unified endpoint for Freeway VD data with Automatic Key Rotation & Failover
+  // Unified endpoint for Freeway VD data with Automatic Key Rotation, Failover & Advanced Lane Recommendation
   const handleFreewayVd = async (req: express.Request, res: express.Response) => {
     try {
       const tdxUrl =
         "https://tdx.transportdata.tw/api/basic/v2/Road/Traffic/Live/VD/Freeway?$filter=startswith(VDID,%20%27VD-N5%27)&$format=JSON";
 
       const result = await globalTdxKeyManager.executeWithFailover<any>(tdxUrl);
-      return res.json(result.data);
+      const rawData = result.data;
+
+      // 提取北向雪隧入口 (28.1K ~ 25K) 各車種流量與速度
+      const { innerLane, outerLane, vdCount } = extractNorthEntranceVdData(rawData);
+      const isWeekendPeak = isWeekendPeakTime();
+
+      // 計算升級版雪山隧道即時車道推薦演算法
+      const recommendation = calculateAdvancedLaneRecommendation(innerLane, outerLane, isWeekendPeak);
+      globalLatestLaneRecommendation = {
+        ...recommendation,
+        innerLane,
+        outerLane,
+        isWeekendPeak,
+        matchedVdCount: vdCount,
+        timestamp: new Date().toISOString(),
+      };
+
+      // 回傳無損向下相容之 JSON 結構
+      if (Array.isArray(rawData)) {
+        // 若原始回傳為陣列，提供完整相容（若 query 要求 json 物件或一般請求）
+        if (req.query.format === "object" || req.query.include_recommendation === "true") {
+          return res.json({
+            data: rawData,
+            ...recommendation,
+            northEntranceInnerLane: innerLane,
+            northEntranceOuterLane: outerLane,
+            isWeekendPeak,
+            matchedEntranceVdCount: vdCount,
+            updateTime: new Date().toISOString(),
+          });
+        }
+        // 直接在 Array 物件上附加欄位或回傳陣列
+        (rawData as any).recommendedLane = recommendation.recommendedLane;
+        (rawData as any).effectiveInnerSpeed = recommendation.effectiveInnerSpeed;
+        (rawData as any).effectiveOuterSpeed = recommendation.effectiveOuterSpeed;
+        (rawData as any).truckRatio = recommendation.truckRatio;
+        (rawData as any).busRatio = recommendation.busRatio;
+        (rawData as any).voiceText = recommendation.voiceText;
+        (rawData as any).advancedLaneRecommendation = recommendation;
+
+        return res.json(rawData);
+      } else if (rawData && typeof rawData === "object") {
+        return res.json({
+          ...rawData,
+          recommendedLane: recommendation.recommendedLane,
+          effectiveInnerSpeed: recommendation.effectiveInnerSpeed,
+          effectiveOuterSpeed: recommendation.effectiveOuterSpeed,
+          truckRatio: recommendation.truckRatio,
+          busRatio: recommendation.busRatio,
+          voiceText: recommendation.voiceText,
+          advancedLaneRecommendation: recommendation,
+          northEntranceInnerLane: innerLane,
+          northEntranceOuterLane: outerLane,
+          isWeekendPeak,
+        });
+      }
+
+      return res.json(rawData);
     } catch (err: any) {
       console.error("TDX Freeway-VD fetch error:", err);
       return res.status(502).json({
@@ -462,6 +763,38 @@ async function startServer() {
       });
     }
   };
+
+  // 專屬雪隧車道推薦與語音朗讀 API 端點 (便於 Siri 捷徑、語音助理與第三方系統直接調用)
+  app.get("/api/lane-recommendation", async (req, res) => {
+    try {
+      const tdxUrl =
+        "https://tdx.transportdata.tw/api/basic/v2/Road/Traffic/Live/VD/Freeway?$filter=startswith(VDID,%20%27VD-N5%27)&$format=JSON";
+      const result = await globalTdxKeyManager.executeWithFailover<any>(tdxUrl);
+      const { innerLane, outerLane, vdCount } = extractNorthEntranceVdData(result.data);
+      const isWeekendPeak = isWeekendPeakTime();
+      const recommendation = calculateAdvancedLaneRecommendation(innerLane, outerLane, isWeekendPeak);
+      globalLatestLaneRecommendation = {
+        ...recommendation,
+        innerLane,
+        outerLane,
+        isWeekendPeak,
+        matchedVdCount: vdCount,
+        timestamp: new Date().toISOString(),
+      };
+
+      return res.json({
+        success: true,
+        ...recommendation,
+        innerLane,
+        outerLane,
+        isWeekendPeak,
+        matchedVdCount: vdCount,
+        timestamp: new Date().toISOString(),
+      });
+    } catch (err: any) {
+      return res.status(500).json({ success: false, error: err.message });
+    }
+  });
 
   app.get("/api/tdx/freeway-vd", handleFreewayVd);
   app.get("/api/v1/freeway-vd", handleFreewayVd);

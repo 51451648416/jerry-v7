@@ -278,11 +278,54 @@ export default function TunnelCrossSectionView({
           <text x="195" y="422" fill="#94a3b8" fontSize="10" fontWeight="bold" textAnchor="middle">
             逃生維修道
           </text>
+          {/* 左側步道人行動態確認 (Person confirming walkway operation) */}
+          <g transform="translate(195, 395)" id="left-walkway-person">
+            {/* 腳底陰影 */}
+            <ellipse cx="0" cy="0" rx="9" ry="3" fill="#0f172a" opacity="0.8" />
+            {/* 雙腿 */}
+            <line x1="-3" y1="-1" x2="-3" y2="-15" stroke="#1e293b" strokeWidth="3.5" strokeLinecap="round" />
+            <line x1="3" y1="-1" x2="3" y2="-15" stroke="#1e293b" strokeWidth="3.5" strokeLinecap="round" />
+            {/* 軀幹與高能見度背心 */}
+            <rect x="-6" y="-31" width="12" height="16" rx="3" fill="#ea580c" />
+            <line x1="-6" y1="-25" x2="6" y2="-25" stroke="#fef08a" strokeWidth="2" />
+            <line x1="-6" y1="-20" x2="6" y2="-20" stroke="#fef08a" strokeWidth="2" />
+            {/* 手臂 */}
+            <line x1="-6" y1="-29" x2="-8" y2="-17" stroke="#f97316" strokeWidth="2.5" strokeLinecap="round" />
+            <line x1="6" y1="-29" x2="8" y2="-17" stroke="#f97316" strokeWidth="2.5" strokeLinecap="round" />
+            {/* 頭部與安全帽 */}
+            <circle cx="0" cy="-37" r="4.5" fill="#fcd34d" />
+            <path d="M -6,-38 Q 0,-44 6,-38 Z" fill="#eab308" />
+            <rect x="-7" y="-38" width="14" height="2" rx="1" fill="#ca8a04" />
+            {/* 正常通行/運作中綠色指示小標 */}
+            <circle cx="8" cy="-38" r="2.5" fill="#10b981" />
+          </g>
+
           {/* 右側步道 */}
           <polygon points="850,440 760,440 760,395 835,395" fill="#334155" stroke="#475569" strokeWidth="2" />
           <text x="805" y="422" fill="#94a3b8" fontSize="10" fontWeight="bold" textAnchor="middle">
             逃生維修道
           </text>
+          {/* 右側步道人行動態確認 (Person confirming walkway operation) */}
+          <g transform="translate(805, 395)" id="right-walkway-person">
+            {/* 腳底陰影 */}
+            <ellipse cx="0" cy="0" rx="9" ry="3" fill="#0f172a" opacity="0.8" />
+            {/* 雙腿 */}
+            <line x1="-3" y1="-1" x2="-3" y2="-15" stroke="#1e293b" strokeWidth="3.5" strokeLinecap="round" />
+            <line x1="3" y1="-1" x2="3" y2="-15" stroke="#1e293b" strokeWidth="3.5" strokeLinecap="round" />
+            {/* 軀幹與安全工作背心 */}
+            <rect x="-6" y="-31" width="12" height="16" rx="3" fill="#0284c7" />
+            <line x1="-6" y1="-25" x2="6" y2="-25" stroke="#fef08a" strokeWidth="2" />
+            <line x1="-6" y1="-20" x2="6" y2="-20" stroke="#fef08a" strokeWidth="2" />
+            {/* 手臂 */}
+            <line x1="-6" y1="-29" x2="-8" y2="-17" stroke="#0ea5e9" strokeWidth="2.5" strokeLinecap="round" />
+            <line x1="6" y1="-29" x2="8" y2="-17" stroke="#0ea5e9" strokeWidth="2.5" strokeLinecap="round" />
+            {/* 頭部與安全帽 */}
+            <circle cx="0" cy="-37" r="4.5" fill="#fcd34d" />
+            <path d="M -6,-38 Q 0,-44 6,-38 Z" fill="#eab308" />
+            <rect x="-7" y="-38" width="14" height="2" rx="1" fill="#ca8a04" />
+            {/* 正常通行/運作中綠色指示小標 */}
+            <circle cx="-8" cy="-38" r="2.5" fill="#10b981" />
+          </g>
 
           {/* 5. 瀝青柏油路面主體 (Pavement Surface) */}
           <rect x="240" y="400" width="520" height="40" fill="#0f172a" stroke="#334155" strokeWidth="2" />

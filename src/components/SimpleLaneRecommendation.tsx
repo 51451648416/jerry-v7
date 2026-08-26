@@ -27,6 +27,7 @@ import MathTheoryInspector from "./MathTheoryInspector";
 import ModelComparisonCard from "./ModelComparisonCard";
 import RawVsModelDiagnostic from "./RawVsModelDiagnostic";
 import GroundTruthBenchmark from "./GroundTruthBenchmark";
+import VehicleLaneAlgorithmInspector from "./VehicleLaneAlgorithmInspector";
 
 interface SimpleLaneRecommendationProps {
   estimatorOutput: FinalEstimatorOutput;
@@ -40,7 +41,7 @@ export default function SimpleLaneRecommendation({
   onOpenAdvanced,
 }: SimpleLaneRecommendationProps) {
   const [showAdvancedApiOptions, setShowAdvancedApiOptions] = useState(false);
-  const [greySubTab, setGreySubTab] = useState<"theory" | "models" | "raw_vs_model" | "telemetry" | "benchmark">("theory");
+  const [greySubTab, setGreySubTab] = useState<"theory" | "vehicle_algo" | "models" | "raw_vs_model" | "telemetry" | "benchmark">("vehicle_algo");
   const estState = estimatorOutput.estimated_state;
   const lane1 = estState.laneComparison.lane1;
   const lane2 = estState.laneComparison.lane2;
@@ -288,6 +289,18 @@ export default function SimpleLaneRecommendation({
             {/* 次級導覽按鈕組 */}
             <div className="flex items-center gap-1.5 overflow-x-auto pb-1 no-scrollbar">
               <button
+                onClick={() => setGreySubTab("vehicle_algo")}
+                className={`px-3 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1.5 cursor-pointer whitespace-nowrap ${
+                  greySubTab === "vehicle_algo"
+                    ? "bg-indigo-600 text-white shadow-xs"
+                    : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+                }`}
+              >
+                <Cpu className="h-3.5 w-3.5 text-sky-300" />
+                <span>車種辨識與車道演算法</span>
+              </button>
+
+              <button
                 onClick={() => setGreySubTab("theory")}
                 className={`px-3 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1 cursor-pointer whitespace-nowrap ${
                   greySubTab === "theory"
@@ -350,6 +363,10 @@ export default function SimpleLaneRecommendation({
 
             {/* 子分頁內容 */}
             <div className="pt-2">
+              {greySubTab === "vehicle_algo" && (
+                <VehicleLaneAlgorithmInspector estimatorOutput={estimatorOutput} />
+              )}
+
               {greySubTab === "theory" && estState && (
                 <MathTheoryInspector estState={estState} />
               )}

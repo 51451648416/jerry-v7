@@ -3,14 +3,18 @@ import { Scale, Clock, ShieldCheck, CheckCircle2, Layers } from "lucide-react";
 import { FinalEstimatorOutput } from "../types";
 
 interface ModelComparisonCardProps {
-  estimatorOutput: FinalEstimatorOutput;
+  estimatorOutput?: FinalEstimatorOutput | null;
 }
 
 export default function ModelComparisonCard({ estimatorOutput }: ModelComparisonCardProps) {
+  if (!estimatorOutput || !estimatorOutput.estimated_state) {
+    return null;
+  }
+
   const estState = estimatorOutput.estimated_state;
-  const segments = estState.segments;
-  const lane1 = estState.laneComparison.lane1;
-  const lane2 = estState.laneComparison.lane2;
+  const segments = estState.segments || [];
+  const lane1 = estState.laneComparison?.lane1 || ({} as any);
+  const lane2 = estState.laneComparison?.lane2 || ({} as any);
 
   return (
     <div className="bg-slate-900 border border-slate-800 p-6 rounded-2xl shadow-sm space-y-6">
