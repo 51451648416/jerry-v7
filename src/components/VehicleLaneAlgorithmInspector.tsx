@@ -45,7 +45,7 @@ export default function VehicleLaneAlgorithmInspector({
 
   useEffect(() => {
     fetchAlgorithmLiveState();
-    const interval = setInterval(fetchAlgorithmLiveState, 15000);
+    const interval = setInterval(fetchAlgorithmLiveState, 150000); // 每 150 秒自動更新一次
     return () => clearInterval(interval);
   }, []);
 
@@ -102,15 +102,6 @@ export default function VehicleLaneAlgorithmInspector({
             即時自 TDX VD 提取小型車 (S)、大客車 (L)、大貨車 (T) 辨識流量，結合大貨車爬坡壓速阻抗與假日大客車專用道交織模型。
           </p>
         </div>
-
-        <button
-          onClick={fetchAlgorithmLiveState}
-          disabled={loading}
-          className="self-start sm:self-auto px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs font-mono text-slate-300 flex items-center gap-1.5 border border-slate-700 transition cursor-pointer"
-        >
-          <RefreshCw className={`h-3.5 w-3.5 ${loading ? "animate-spin text-sky-400" : "text-slate-400"}`} />
-          <span>{loading ? "計算中..." : "即時重算驗證"}</span>
-        </button>
       </div>
 
       {/* 2. 演算法決策看板與語音廣播預覽 */}
