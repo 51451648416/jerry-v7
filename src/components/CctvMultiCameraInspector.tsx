@@ -180,18 +180,13 @@ export default function CctvMultiCameraInspector({
             </button>
           </div>
 
-          <button
-            onClick={() => triggerInspection()}
-            disabled={triggering || isQueueProcessing}
-            className={`inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl text-xs font-semibold border transition-all ${
-              triggering || isQueueProcessing
-                ? "bg-slate-800/80 text-slate-400 border-slate-700 cursor-not-allowed"
-                : "bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-300 border-indigo-500/30 active:scale-95"
-            }`}
-          >
-            <RefreshCw className={`w-3.5 h-3.5 ${triggering || isQueueProcessing ? "animate-spin" : ""}`} />
-            <span>{isQueueProcessing ? "隊列巡檢中..." : "全線排程巡檢"}</span>
-          </button>
+          <div className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold bg-indigo-950/70 text-indigo-300 border border-indigo-700/40">
+            <span className="relative flex h-2 w-2">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+              <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+            </span>
+            <span>Vercel Cron 伺服器背景定時巡檢中</span>
+          </div>
         </div>
       </div>
 
@@ -372,43 +367,29 @@ export default function CctvMultiCameraInspector({
                   )}
                 </div>
 
-                {/* 底部快取進度條與單鏡頭巡檢按鈕 */}
-                <div className="mt-3 pt-2.5 border-t border-slate-800/80 flex items-center justify-between text-xs gap-3">
-                  <div className="flex-1">
-                    <div className="flex justify-between text-[11px] text-slate-400 mb-1">
-                      <span className="flex items-center gap-1">
-                        <Clock className="w-3 h-3 text-cyan-400" />
-                        快取倒數
-                      </span>
-                      <span className={node.isStale ? "text-amber-400" : "text-slate-300"}>
-                        {node.cacheTtlRemainingSec} 秒 {node.isStale ? "(已排入隊列)" : ""}
-                      </span>
-                    </div>
-                    <div className="w-full bg-slate-800 h-1.5 rounded-full overflow-hidden">
-                      <div
-                        className={`h-full transition-all duration-1000 ${
-                          node.isStale
-                            ? "bg-amber-500"
-                            : ttlPercent > 30
-                            ? "bg-indigo-500"
-                            : "bg-amber-400"
-                        }`}
-                        style={{ width: `${ttlPercent}%` }}
-                      />
-                    </div>
+                {/* 底部快取進度條 */}
+                <div className="mt-3 pt-2.5 border-t border-slate-800/80 text-xs">
+                  <div className="flex justify-between text-[11px] text-slate-400 mb-1">
+                    <span className="flex items-center gap-1">
+                      <Clock className="w-3 h-3 text-cyan-400" />
+                      快取倒數
+                    </span>
+                    <span className={node.isStale ? "text-amber-400 font-mono" : "text-slate-300 font-mono"}>
+                      {node.cacheTtlRemainingSec} 秒 {node.isStale ? "(待排程更新)" : ""}
+                    </span>
                   </div>
-
-                  <button
-                    onClick={() => triggerInspection(node.cameraId)}
-                    disabled={isProcessingThis || node.cacheTtlRemainingSec > 240}
-                    className={`px-2.5 py-1 rounded-lg text-[11px] font-medium border shrink-0 transition-all ${
-                      isProcessingThis || node.cacheTtlRemainingSec > 240
-                        ? "bg-slate-800/50 text-slate-400 border-slate-800 cursor-not-allowed"
-                        : "bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-300 border-indigo-500/30 active:scale-95"
-                    }`}
-                  >
-                    單獨排程
-                  </button>
+                  <div className="w-full bg-slate-800 h-1.5 rounded-full overflow-hidden">
+                    <div
+                      className={`h-full transition-all duration-1000 ${
+                        node.isStale
+                          ? "bg-amber-500"
+                          : ttlPercent > 30
+                          ? "bg-indigo-500"
+                          : "bg-amber-400"
+                      }`}
+                      style={{ width: `${ttlPercent}%` }}
+                    />
+                  </div>
                 </div>
               </motion.div>
             );

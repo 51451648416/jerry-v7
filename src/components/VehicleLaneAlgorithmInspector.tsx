@@ -262,25 +262,13 @@ export default function VehicleLaneAlgorithmInspector({
           </div>
 
           <div className="flex items-center gap-2 self-start sm:self-auto">
-            <button
-              id="btn-reanalyze-cctv-vision"
-              onClick={triggerCctvReanalysis}
-              disabled={cctvAnalyzing || cooldownSec > 0}
-              className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold shadow-sm transition-colors ${
-                cooldownSec > 0
-                  ? "bg-slate-800 text-slate-400 border border-slate-700 cursor-not-allowed"
-                  : "bg-indigo-600 hover:bg-indigo-500 active:bg-indigo-700 text-white"
-              }`}
-            >
-              <RefreshCw className={`h-3.5 w-3.5 ${cctvAnalyzing ? "animate-spin" : ""}`} />
-              <span>
-                {cctvAnalyzing
-                  ? "雲端辨識中..."
-                  : cooldownSec > 0
-                  ? `冷卻中 (${cooldownSec}s)`
-                  : `重新辨識 (${isSouth ? "南向18K" : "北向26K"})`}
+            <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold bg-indigo-950/70 text-indigo-300 border border-indigo-700/40">
+              <span className="relative flex h-2 w-2">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
               </span>
-            </button>
+              <span>雲端每 5 分鐘自動巡檢</span>
+            </span>
           </div>
         </div>
 
