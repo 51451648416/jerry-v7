@@ -657,6 +657,60 @@ export interface TdxCredentials {
   clientSecret: string;
 }
 
+export interface MultiCameraInspectionNode {
+  id: string;
+  code: string;
+  direction: Direction;
+  mileage: number;
+  title: string;
+  locationName: string;
+  segmentType: "ENTRANCE" | "MID_FRONT" | "MID_TUNNEL" | "MID_REAR" | "EXIT";
+  segmentName: string;
+  url: string;
+  fallbackUrls?: string[];
+  defaultVdStationId: string;
+}
+
+export interface CameraAiInspectionRecord {
+  cameraId: string;
+  cameraTitle: string;
+  locationName: string;
+  mileageKm: number;
+  direction: Direction;
+  segmentType: string;
+  segmentName: string;
+  hasAbnormalGap: boolean;
+  gapLane: 0 | 1 | 2; // 0: 無, 1: 內側, 2: 外側
+  confidence: number;
+  observationText: string;
+  analyzedAt: string;
+  modelName: string;
+  cacheTtlRemainingSec: number;
+  isStale: boolean;
+  status: "NORMAL_FLOW" | "TURTLE_DETECTED" | "CONGESTED" | "STANDBY";
+}
+
+export interface FullLineInspectionState {
+  success: boolean;
+  nodes: CameraAiInspectionRecord[];
+  queueStatus: {
+    isProcessing: boolean;
+    queueLength: number;
+    currentProcessingCameraId?: string;
+    nextAllowedCallInSec: number;
+    sequentialIntervalSec: number;
+    estimatedQueueClearTimeSec: number;
+  };
+  rateLimitGuard: {
+    rpmLimit: number;
+    currentEstimatedRpm: number;
+    rpdBudgetRemaining: number;
+    cacheTtlSec: number;
+    protectionMode: "SEQUENTIAL_THROTTLED_ACTIVE";
+  };
+  lastInspectedAt: string;
+}
+
 export interface CctvCamera {
   id: string;
   code: string;

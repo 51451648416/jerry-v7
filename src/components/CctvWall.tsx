@@ -16,6 +16,7 @@ import {
 import { motion, AnimatePresence } from "motion/react";
 import { CctvCamera, Direction } from "../types";
 import { CCTV_CAMERAS } from "../data/cctvData";
+import CctvMultiCameraInspector from "./CctvMultiCameraInspector";
 
 interface CctvWallProps {
   currentDirection: Direction;
@@ -163,6 +164,9 @@ export default function CctvWall({ currentDirection }: CctvWallProps) {
           </button>
         </div>
       </div>
+
+      {/* 全線多鏡頭 AI 循環巡檢矩陣 (Sequential Queue Inspection Matrix) */}
+      <CctvMultiCameraInspector currentDirection={currentDirection} />
 
       {/* CCTV Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">

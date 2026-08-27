@@ -4,6 +4,15 @@ import { createServer as createViteServer } from "vite";
 import { Redis } from "@upstash/redis";
 import { GoogleGenAI } from "@google/genai";
 import { globalTdxKeyManager } from "./src/services/tdxKeyRotator";
+import {
+  globalCctvInspectionQueue,
+  CCTV_CACHE_TTL_SEC,
+  CCTV_CACHE_TTL_MS,
+} from "./src/services/cctvInspectionQueue";
+import {
+  HSUEHSHAN_INSPECTION_NODES,
+  getInspectionNodeById,
+} from "./src/data/cctvInspectionConfig";
 
 // Lazy Upstash Redis Client with Safe Fallback
 let redisClient: Redis | null = null;
@@ -1210,94 +1219,140 @@ async function startServer() {
     }
   });
 
-  // 專屬雲端 CCTV 影像辨識與地面 VD 交叉驗證狀態 API (支援 direction: 'N' | 'S')
+  // =========================================================================
+  // 全線多鏡頭巡檢與智慧限流 API (Full-Line Multi-Camera Inspection & Rate Guard)
+  // =========================================================================
+
+  // 1. 唯讀保護批次狀態 (Read-Through Cache)：讀取 8 支全線鏡頭 AI 辨識狀態與 TTL
+  app.get("/api/cctv/inspection/all", async (_req, res) => {
+    try {
+      const fullState = await globalCctvInspectionQueue.getFullLineInspectionState();
+      return res.json(fullState);
+    } catch (err: any) {
+      console.error("Failed to get full line inspection state:", err);
+      return res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  // 2. 手動安全觸發巡檢 (支援單鏡頭或全線，自動排入循環隊列並遵守 4.5s 間隔)
+  app.post("/api/cctv/inspection/trigger", async (req, res) => {
+    try {
+      const cameraId = req.body?.cameraId ? String(req.body.cameraId) : undefined;
+      const result = globalCctvInspectionQueue.triggerInspection(cameraId);
+      const fullState = await globalCctvInspectionQueue.getFullLineInspectionState();
+      return res.json({
+        success: true,
+        triggerResult: result,
+        ...fullState,
+      });
+    } catch (err: any) {
+      return res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  // 3. 專屬雲端 CCTV 影像辨識與地面 VD 交叉驗證狀態 API (支援 direction: 'N' | 'S')
   app.get("/api/cctv/cross-validation", async (req, res) => {
     try {
       const direction: "N" | "S" = String(req.query.direction || "N").toUpperCase() === "S" ? "S" : "N";
       const config = DIRECTION_CCTV_CONFIGS[direction];
       const dirRec = globalLatestLaneRecommendation[direction];
 
-      const now = Date.now();
-      const lastTime = lastManualAnalysisTimestamp[direction] || 0;
-      const elapsed = now - lastTime;
-      const cooldownRemainingSec = elapsed < CCTV_MANUAL_COOLDOWN_MS ? Math.ceil((CCTV_MANUAL_COOLDOWN_MS - elapsed) / 1000) : 0;
+      // 從全線巡檢快取中取得該方向入口端/代表鏡頭的最新 AI 記錄 (300 秒 TTL)
+      const keyCamRecord = globalCctvInspectionQueue.getDirectionKeyCameraRecord(direction);
+      const groundVd = {
+        vdStationId: config.defaultVdStationId,
+        mileageKm: config.mileage,
+        innerSpeedKmh: dirRec?.innerLane?.speedKmh || (direction === "S" ? 76.0 : 75.0),
+        outerSpeedKmh: dirRec?.outerLane?.speedKmh || (direction === "S" ? 74.0 : 72.0),
+      };
 
-      const state = await getLatestCctvCrossValidation(
-        {
-          vdStationId: config.defaultVdStationId,
-          mileageKm: config.mileage,
-          innerSpeedKmh: dirRec?.innerLane?.speedKmh || (direction === "S" ? 76.0 : 75.0),
-          outerSpeedKmh: dirRec?.outerLane?.speedKmh || (direction === "S" ? 74.0 : 72.0),
-        },
-        req.query.refresh === "true",
+      const cctvResult: CctvVisionAnalysisResult = {
+        hasAbnormalGap: keyCamRecord.hasAbnormalGap,
+        gapLane: keyCamRecord.gapLane,
+        confidence: keyCamRecord.confidence,
+        observationText: keyCamRecord.observationText,
+        cameraId: keyCamRecord.cameraId,
+        cameraTitle: keyCamRecord.cameraTitle,
+        mileageKm: keyCamRecord.mileageKm,
+        direction: keyCamRecord.direction,
+        analyzedAt: keyCamRecord.analyzedAt,
+        modelName: keyCamRecord.modelName,
+      };
+
+      const state = crossValidateCctvAndVd(
+        cctvResult,
+        groundVd,
+        keyCamRecord.cacheTtlRemainingSec,
         direction
       );
-      return res.json({ success: true, direction, cooldownRemainingSec, ...state });
+
+      return res.json({
+        success: true,
+        direction,
+        cooldownRemainingSec: Math.max(0, keyCamRecord.cacheTtlRemainingSec - 120),
+        ...state,
+      });
     } catch (err: any) {
       return res.status(500).json({ success: false, error: err.message });
     }
   });
 
-  app.post("/api/cctv/cross-validation/analyze", async (req, res) => {
+  // 4. 即時觸發/定時巡檢 (支援 GET 與 POST，相容 Vercel Cron 定時排程 */5 * * * *)
+  const handleCrossValidationAnalyze = async (req: express.Request, res: express.Response) => {
     try {
+      const rawDir = req.body?.direction || req.query?.direction;
       const direction: "N" | "S" =
-        String(req.body?.direction || req.query.direction || "N").toUpperCase() === "S" ? "S" : "N";
+        String(rawDir || "N").toUpperCase() === "S" ? "S" : "N";
       
-      const now = Date.now();
-      const lastTime = lastManualAnalysisTimestamp[direction] || 0;
-      const elapsed = now - lastTime;
-
-      if (elapsed < CCTV_MANUAL_COOLDOWN_MS) {
-        const remainingSec = Math.ceil((CCTV_MANUAL_COOLDOWN_MS - elapsed) / 1000);
-        const cachedSlot = globalCctvCrossValidationCache[direction];
-        const dirRec = globalLatestLaneRecommendation[direction];
-        const config = DIRECTION_CCTV_CONFIGS[direction];
-
-        let state = cachedSlot?.state;
-        if (!state) {
-          state = await getLatestCctvCrossValidation(
-            {
-              vdStationId: config.defaultVdStationId,
-              mileageKm: config.mileage,
-              innerSpeedKmh: dirRec?.innerLane?.speedKmh || (direction === "S" ? 76.0 : 75.0),
-              outerSpeedKmh: dirRec?.outerLane?.speedKmh || (direction === "S" ? 74.0 : 72.0),
-            },
-            false,
-            direction
-          );
-        }
-
-        return res.json({
-          success: false,
-          cooldownActive: true,
-          cooldownRemainingSec: remainingSec,
-          message: `重新辨識冷卻中，請於 ${remainingSec} 秒後再試（冷卻時間 190 秒）`,
-          direction,
-          ...state,
-        });
-      }
-
-      // 紀錄本次手動重新辨識時間
-      lastManualAnalysisTimestamp[direction] = now;
-
       const config = DIRECTION_CCTV_CONFIGS[direction];
-      const dirRec = globalLatestLaneRecommendation[direction];
+      const targetCamId = direction === "N" ? "n26k" : "s18k";
 
-      const state = await getLatestCctvCrossValidation(
-        {
-          vdStationId: config.defaultVdStationId,
-          mileageKm: config.mileage,
-          innerSpeedKmh: dirRec?.innerLane?.speedKmh || (direction === "S" ? 76.0 : 75.0),
-          outerSpeedKmh: dirRec?.outerLane?.speedKmh || (direction === "S" ? 74.0 : 72.0),
-        },
-        true, // 強制立即重新抓圖與視覺分析
+      // 若為排程或手動觸發，推入循環隊列
+      globalCctvInspectionQueue.enqueueCamera(targetCamId);
+
+      const keyCamRecord = globalCctvInspectionQueue.getDirectionKeyCameraRecord(direction);
+      const dirRec = globalLatestLaneRecommendation[direction];
+      const groundVd = {
+        vdStationId: config.defaultVdStationId,
+        mileageKm: config.mileage,
+        innerSpeedKmh: dirRec?.innerLane?.speedKmh || (direction === "S" ? 76.0 : 75.0),
+        outerSpeedKmh: dirRec?.outerLane?.speedKmh || (direction === "S" ? 74.0 : 72.0),
+      };
+
+      const cctvResult: CctvVisionAnalysisResult = {
+        hasAbnormalGap: keyCamRecord.hasAbnormalGap,
+        gapLane: keyCamRecord.gapLane,
+        confidence: keyCamRecord.confidence,
+        observationText: keyCamRecord.observationText,
+        cameraId: keyCamRecord.cameraId,
+        cameraTitle: keyCamRecord.cameraTitle,
+        mileageKm: keyCamRecord.mileageKm,
+        direction: keyCamRecord.direction,
+        analyzedAt: keyCamRecord.analyzedAt,
+        modelName: keyCamRecord.modelName,
+      };
+
+      const state = crossValidateCctvAndVd(
+        cctvResult,
+        groundVd,
+        keyCamRecord.cacheTtlRemainingSec,
         direction
       );
-      return res.json({ success: true, direction, cooldownRemainingSec: 190, ...state });
+
+      return res.json({
+        success: true,
+        direction,
+        cooldownRemainingSec: keyCamRecord.cacheTtlRemainingSec,
+        ttl: 360,
+        ...state,
+      });
     } catch (err: any) {
       return res.status(500).json({ success: false, error: err.message });
     }
-  });
+  };
+
+  app.get("/api/cctv/cross-validation/analyze", handleCrossValidationAnalyze);
+  app.post("/api/cctv/cross-validation/analyze", handleCrossValidationAnalyze);
 
   // Unified endpoint for Freeway VD data with Automatic Key Rotation, Failover & Advanced Lane Recommendation
   const handleFreewayVd = async (req: express.Request, res: express.Response) => {

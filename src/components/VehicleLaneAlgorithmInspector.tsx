@@ -19,8 +19,10 @@ import {
   Server,
   Clock,
   Radio,
+  Camera,
 } from "lucide-react";
 import { FinalEstimatorOutput, CctvVdCrossValidationState } from "../types";
+import CctvMultiCameraInspector from "./CctvMultiCameraInspector";
 
 interface VehicleLaneAlgorithmInspectorProps {
   estimatorOutput?: FinalEstimatorOutput | null;
@@ -311,7 +313,7 @@ export default function VehicleLaneAlgorithmInspector({
             </div>
             <div className="text-[11px] text-slate-400 font-mono flex items-center gap-1">
               <Clock className="h-3 w-3 text-indigo-400" />
-              <span>快取 TTL 剩餘: {currentCctvState?.cacheTtlRemainingSec ?? 240} 秒 (每4分鐘刷新)</span>
+              <span>快取 TTL 剩餘: {currentCctvState?.cacheTtlRemainingSec ?? 360} 秒 (每 5 分鐘 Vercel Cron 背景巡檢)</span>
             </div>
           </div>
 
@@ -323,14 +325,13 @@ export default function VehicleLaneAlgorithmInspector({
                 <span>Gemini 視覺幾何判定</span>
               </span>
               <span className="text-[10px] font-mono text-indigo-300">
-                {currentCctvState?.cctvResult?.modelName || "gemini-3.7-flash"}
+                {currentCctvState?.cctvResult?.modelName || "gemini-3.1-flash-lite"}
               </span>
             </div>
             <div className="text-xs text-slate-200 font-medium leading-relaxed">
               {currentCctvState?.cctvResult?.observationText ||
-                (isSouth
-                  ? "南向坪林端雲端視覺常態巡檢中，各車道空間車距均勻，無異常大淨空壓速帶頭車。"
-                  : "北向頭城端雲端視覺常態巡檢中，各車道空間車距均勻，無異常大淨空壓速帶頭車。")}
+                currentCctvState?.observationText ||
+                "資料正在更新中，背景定時巡檢中..."}
             </div>
             <div className="text-[10px] text-slate-500 font-mono">
               攝影機: {currentCctvState?.cctvResult?.cameraTitle || (isSouth ? "國5 南向 18K (坪林端入口段)" : "國5 北向 26K (頭城端入口段)")}
@@ -380,7 +381,10 @@ export default function VehicleLaneAlgorithmInspector({
         </div>
       </div>
 
-      {/* 4. 車種流量辨識與分流統計 (Small Car / Bus / Truck) */}
+      {/* 4. 雪山隧道全線 8 節點多鏡頭循環巡檢矩陣 (Full-Line Multi-Camera Inspection Matrix) */}
+      <CctvMultiCameraInspector currentDirection={currentDirection} />
+
+      {/* 5. 車種流量辨識與分流統計 (Small Car / Bus / Truck) */}
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
         {/* 內側車道 */}
         <div className="p-4 rounded-2xl bg-slate-950 border border-slate-800 space-y-3">

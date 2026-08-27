@@ -18,11 +18,19 @@ export default async function handler(req: any, res: any) {
       const cached: any = await redis.get(redisKey);
       if (cached) {
         const parsed = typeof cached === "string" ? JSON.parse(cached) : cached;
+        const cctvResult = parsed.cctvResult || parsed;
+        const now = Date.now();
+        const cachedAt = parsed.cachedAt || now;
+        const elapsedSec = Math.floor((now - cachedAt) / 1000);
+        const cacheTtlRemainingSec = Math.max(0, 360 - elapsedSec);
+
         return res.status(200).json({
           success: true,
           direction,
-          ...(parsed.cctvResult || parsed),
-          cachedAt: parsed.cachedAt,
+          ...cctvResult,
+          cacheTtlRemainingSec,
+          cachedAt,
+          isUpdating: false,
         });
       }
     } catch (err) {
@@ -30,14 +38,19 @@ export default async function handler(req: any, res: any) {
     }
   }
 
+  // 徹底移除任何 Heuristic 假資料：若 Redis 尚無資料或快取過期，明確回傳資料正在更新中
   return res.status(200).json({
-    success: true,
+    success: false,
+    status: "UPDATING",
     direction,
     hasAbnormalGap: false,
     gapLane: 0,
-    confidence: 0.95,
-    observationText: `${direction === "S" ? "南向坪林端" : "北向頭城端"}常態巡檢中，空間車距均勻。`,
-    analyzedAt: new Date().toISOString(),
-    modelName: "gemini-3.7-flash",
+    confidence: 0,
+    observationText: "資料正在更新中，背景定時巡檢中...",
+    analyzedAt: null,
+    modelName: null,
+    cacheTtlRemainingSec: 0,
+    isUpdating: true,
+    message: "目前尚無最新推論快取，背景定時巡檢（Vercel Cron）即將更新",
   });
 }
