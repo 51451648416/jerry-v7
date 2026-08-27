@@ -1,11 +1,18 @@
-import type { Request, Response } from "express";
-import { getRedis } from "./_redis";
+import { Redis } from "@upstash/redis";
 
-export default async function handler(req: Request, res: Response) {
-  const redis = getRedis();
+export default async function handler(req: any, res: any) {
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+  if (req.method === "OPTIONS") return res.status(200).end();
+
   let redisConnected = false;
-  if (redis) {
+  const url = process.env.UPSTASH_REDIS_REST_URL;
+  const token = process.env.UPSTASH_REDIS_REST_TOKEN;
+
+  if (url && token) {
     try {
+      const redis = new Redis({ url, token });
       await redis.ping();
       redisConnected = true;
     } catch {
