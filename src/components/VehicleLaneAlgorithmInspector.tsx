@@ -49,16 +49,20 @@ export default function VehicleLaneAlgorithmInspector({
     return () => clearInterval(interval);
   }, []);
 
-  // 從即時 API 或 estimatorOutput 取得演算法數據
+  // 從 estimatorOutput 或即時 API 取得演算法數據
+  const hasEstOutput = Boolean(estimatorOutput?.estimated_state?.laneComparison);
+  const modelInnerSpeed = estimatorOutput?.estimated_state?.laneComparison?.lane1?.equivalentTravelSpeedKmh;
+  const modelOuterFinalSpeed = estimatorOutput?.estimated_state?.laneComparison?.lane2?.equivalentTravelSpeedKmh;
+
   const innerLane = liveData?.innerLane || {
-    speedKmh: estimatorOutput?.estimated_state?.laneComparison?.lane1?.equivalentTravelSpeedKmh || 75,
+    speedKmh: modelInnerSpeed || 75,
     volumeS: 85,
     volumeL: 4,
     volumeT: 1,
   };
 
   const outerLane = liveData?.outerLane || {
-    speedKmh: estimatorOutput?.estimated_state?.laneComparison?.lane2?.equivalentTravelSpeedKmh || 72,
+    speedKmh: modelOuterFinalSpeed || 72,
     volumeS: 78,
     volumeL: 12,
     volumeT: 6,
@@ -76,10 +80,27 @@ export default function VehicleLaneAlgorithmInspector({
   const busPenalty = isWeekendPeak && busRatio > 0.12 ? 2.0 : 0;
   const totalPenalty = truckPenalty + busPenalty;
 
-  const effectiveInnerSpeed = liveData?.effectiveInnerSpeed ?? innerLane.speedKmh;
-  const effectiveOuterSpeed = liveData?.effectiveOuterSpeed ?? (outerLane.speedKmh - totalPenalty);
+  // 全域對齊：若有模型全線空間微元流速，優先以頂部主模型流速為最終等效流速，確保上下數據 100% 吻合
+  const effectiveInnerSpeed = hasEstOutput && modelInnerSpeed !== undefined 
+    ? modelInnerSpeed 
+    : (liveData?.effectiveInnerSpeed ?? innerLane.speedKmh);
+
+  const effectiveOuterSpeed = hasEstOutput && modelOuterFinalSpeed !== undefined
+    ? modelOuterFinalSpeed
+    : (liveData?.effectiveOuterSpeed ?? (outerLane.speedKmh - totalPenalty));
+
+  const baseOuterSpeed = hasEstOutput && modelOuterFinalSpeed !== undefined
+    ? Math.round((modelOuterFinalSpeed + totalPenalty) * 10) / 10
+    : outerLane.speedKmh;
+
+  const baseInnerSpeed = hasEstOutput && modelInnerSpeed !== undefined
+    ? Math.round(modelInnerSpeed * 10) / 10
+    : innerLane.speedKmh;
+
   const recommendedLane = liveData?.recommendedLane ?? (effectiveInnerSpeed >= effectiveOuterSpeed ? "內側車道" : "外側車道");
-  const voiceText = liveData?.voiceText ?? "即將進入雪山隧道，目前內側實測流速較快，推薦行駛內側車道。";
+  const voiceText = liveData?.voiceText ?? (effectiveInnerSpeed >= effectiveOuterSpeed
+    ? "即將進入雪山隧道，目前內側實測流速較快，推薦行駛內側車道。"
+    : "即將進入雪山隧道，目前外側無重車阻擋且流速優於內側，系統推薦行駛外側車道。");
 
   return (
     <div className="bg-slate-900 border border-slate-800 p-5 sm:p-6 rounded-3xl shadow-sm space-y-6 text-slate-200">
@@ -146,7 +167,7 @@ export default function VehicleLaneAlgorithmInspector({
               <h3 className="text-sm font-bold text-slate-200">內側車道 (Lane 1) 車種實測</h3>
             </div>
             <span className="text-xs font-mono font-bold text-indigo-400">
-              實測: {innerLane.speedKmh.toFixed(1)} km/h
+              實測: {baseInnerSpeed.toFixed(1)} km/h
             </span>
           </div>
 
@@ -207,7 +228,7 @@ export default function VehicleLaneAlgorithmInspector({
               <h3 className="text-sm font-bold text-slate-200">外側車道 (Lane 2) 車種實測</h3>
             </div>
             <span className="text-xs font-mono font-bold text-amber-400">
-              實測: {outerLane.speedKmh.toFixed(1)} km/h
+              基準: {baseOuterSpeed.toFixed(1)} km/h
             </span>
           </div>
 
