@@ -503,9 +503,9 @@ export default function RampMeterPulseMeter({
                 本系統完全依據高公局交控架構（ATMS），透過雙軌感測器聯立即時計算：
               </p>
               <div className="bg-slate-950/80 p-3 rounded-xl border border-slate-800 space-y-2">
-                <div className="font-bold text-emerald-400">1. 頭城 30.5K 主線號誌判定基準 (前後 2~3km 聚焦)：</div>
+                <div className="font-bold text-emerald-400">1. 統一啟動反推開關 (隧道口前主線車速 &lt; 60 km/h)：</div>
                 <p className="text-slate-400">
-                  排除雪山隧道內部干擾，專注於頭城 30.5K 號誌前後 2~3 公里 (32K 上游需求 VD vs 30.5K/30.0K 斷面 VD)。採用靈敏判定門檻：當斷面流速 &lt; 65 km/h、佔有率 &gt; 14% 或流量累積 (ΔQ &gt; 80 vph 且 V_meter &lt; 70 km/h) 即刻觸發主線儀控管制。
+                  排除雪山隧道內部干擾，專注於隧道口前面那一段（頭城 30.5K/30.0K/28.1K 主線斷面 VD）。匝道儀控與主線號誌之啟動反推開關統一設定為：只要主線前面那一段車速低於 60 km/h 即刻啟動排隊延遲反推與管制；若車速 ≥ 60 km/h 則未達門檻，維持全線常態開放暢行（排隊時間為 0 分鐘）。
                 </p>
               </div>
               <div className="bg-slate-950/80 p-3 rounded-xl border border-slate-800 space-y-2">
