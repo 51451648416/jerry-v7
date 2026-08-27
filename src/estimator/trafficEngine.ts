@@ -716,13 +716,37 @@ export function runVdTrafficEstimator(
   
   // 套用阻抗到 lane2State 
   if (outerSpeedPenalty > 0 && !isLane2AllZero) {
+    const oldEquivalentSpeed = lane2State.equivalentTravelSpeedKmh;
     lane2State.equivalentTravelSpeedKmh = Math.max(MIN_PHYSICAL_CRAWL_SPEED_KMH, lane2State.equivalentTravelSpeedKmh - outerSpeedPenalty);
     lane2State.spaceMeanSpeedKmh = Math.max(MIN_PHYSICAL_CRAWL_SPEED_KMH, lane2State.spaceMeanSpeedKmh - outerSpeedPenalty);
-    lane2State.detectorArithmeticMeanSpeedKmh = Math.max(MIN_PHYSICAL_CRAWL_SPEED_KMH, lane2State.detectorArithmeticMeanSpeedKmh - outerSpeedPenalty);
     
     // 重新計算 Travel Time (因為流速降低，時間變長)
+    const oldTravelTime = lane2State.travelTimeSec;
     lane2State.travelTimeSec = (tunnelLengthKm / lane2State.equivalentTravelSpeedKmh) * 3600;
     lane2State.travelTimeFormatted = formatSecondsToMinSec(lane2State.travelTimeSec);
+    lane2State.densityVehPerKm =
+      lane2State.equivalentTravelSpeedKmh > 0
+        ? lane2State.flowVehPerHour / lane2State.equivalentTravelSpeedKmh
+        : 0;
+
+    // 同步微元時間與速度，確保 Σ(segmentTravelTimeSec) === travelTimeSec 與微元物理一致性
+    if (lane2State.segments && lane2State.segments.length > 0 && oldTravelTime > 0) {
+      const timeScale = lane2State.travelTimeSec / oldTravelTime;
+      lane2State.segments = lane2State.segments.map((seg) => {
+        const newSegTime = seg.segmentTravelTimeSec * timeScale;
+        const newSegSpeed = newSegTime > 0 ? seg.lengthKm / (newSegTime / 3600) : seg.estimatedSegmentSpeedKmh;
+        return {
+          ...seg,
+          segmentTravelTimeSec: newSegTime,
+          estimatedSegmentSpeedKmh: newSegSpeed,
+        };
+      });
+      const sumSegTimes = lane2State.segments.reduce((a, b) => a + b.segmentTravelTimeSec, 0);
+      const residual = lane2State.travelTimeSec - sumSegTimes;
+      if (Math.abs(residual) > 0 && lane2State.segments.length > 0) {
+        lane2State.segments[lane2State.segments.length - 1].segmentTravelTimeSec += residual;
+      }
+    }
   }
 
   const diffSec = Math.abs(lane1State.travelTimeSec - lane2State.travelTimeSec);

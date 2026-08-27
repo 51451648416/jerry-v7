@@ -71,14 +71,15 @@ export default function VehicleLaneAlgorithmInspector({
   const busRatio = liveData?.busRatio ?? (totalOuterVol > 0 ? (outerLane.volumeL || 0) / totalOuterVol : 0.08);
   const isWeekendPeak = liveData?.isWeekendPeak ?? false;
 
-  const effectiveInnerSpeed = liveData?.effectiveInnerSpeed ?? innerLane.speedKmh;
-  const effectiveOuterSpeed = liveData?.effectiveOuterSpeed ?? (outerLane.speedKmh - (truckRatio > 0.05 ? Math.min(4.5, (truckRatio - 0.05) * 20) : 0));
-  const recommendedLane = liveData?.recommendedLane ?? (effectiveInnerSpeed >= effectiveOuterSpeed ? "內側車道" : "外側車道");
-  const voiceText = liveData?.voiceText ?? "即將進入雪山隧道，目前內側實測流速較快，推薦行駛內側車道。";
-
   // 阻抗扣減計算
   const truckPenalty = truckRatio > 0.05 ? Math.min(4.5, (truckRatio - 0.05) * 20) : 0;
   const busPenalty = isWeekendPeak && busRatio > 0.12 ? 2.0 : 0;
+  const totalPenalty = truckPenalty + busPenalty;
+
+  const effectiveInnerSpeed = liveData?.effectiveInnerSpeed ?? innerLane.speedKmh;
+  const effectiveOuterSpeed = liveData?.effectiveOuterSpeed ?? (outerLane.speedKmh - totalPenalty);
+  const recommendedLane = liveData?.recommendedLane ?? (effectiveInnerSpeed >= effectiveOuterSpeed ? "內側車道" : "外側車道");
+  const voiceText = liveData?.voiceText ?? "即將進入雪山隧道，目前內側實測流速較快，推薦行駛內側車道。";
 
   return (
     <div className="bg-slate-900 border border-slate-800 p-5 sm:p-6 rounded-3xl shadow-sm space-y-6 text-slate-200">
