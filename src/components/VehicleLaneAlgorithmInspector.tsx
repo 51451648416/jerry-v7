@@ -72,13 +72,13 @@ export default function VehicleLaneAlgorithmInspector({
   const isWeekendPeak = liveData?.isWeekendPeak ?? false;
 
   const effectiveInnerSpeed = liveData?.effectiveInnerSpeed ?? innerLane.speedKmh;
-  const effectiveOuterSpeed = liveData?.effectiveOuterSpeed ?? (outerLane.speedKmh - (truckRatio > 0.03 ? Math.min(8.0, truckRatio * 30) : 0));
+  const effectiveOuterSpeed = liveData?.effectiveOuterSpeed ?? (outerLane.speedKmh - (truckRatio > 0.05 ? Math.min(4.5, (truckRatio - 0.05) * 20) : 0));
   const recommendedLane = liveData?.recommendedLane ?? (effectiveInnerSpeed >= effectiveOuterSpeed ? "內側車道" : "外側車道");
   const voiceText = liveData?.voiceText ?? "即將進入雪山隧道，目前內側實測流速較快，推薦行駛內側車道。";
 
   // 阻抗扣減計算
-  const truckPenalty = truckRatio > 0.03 ? Math.min(8.0, truckRatio * 30) : 0;
-  const busPenalty = isWeekendPeak && busRatio > 0.10 ? 3.5 : 0;
+  const truckPenalty = truckRatio > 0.05 ? Math.min(4.5, (truckRatio - 0.05) * 20) : 0;
+  const busPenalty = isWeekendPeak && busRatio > 0.12 ? 2.0 : 0;
 
   return (
     <div className="bg-slate-900 border border-slate-800 p-5 sm:p-6 rounded-3xl shadow-sm space-y-6 text-slate-200">
@@ -272,12 +272,12 @@ export default function VehicleLaneAlgorithmInspector({
           <div className="p-3 rounded-xl bg-slate-900 border border-slate-800 space-y-1.5">
             <div className="flex items-center justify-between font-bold">
               <span className="text-slate-200">規則 1：大貨車爬坡壓速阻抗</span>
-              <span className={`px-2 py-0.5 rounded text-[10px] font-mono ${truckRatio > 0.03 ? "bg-rose-950 text-rose-400 border border-rose-800" : "bg-emerald-950 text-emerald-400"}`}>
-                {truckRatio > 0.03 ? `觸發 (-${truckPenalty.toFixed(1)} km/h)` : "未觸發 (卡車 ≤3%)"}
+              <span className={`px-2 py-0.5 rounded text-[10px] font-mono ${truckRatio > 0.05 ? "bg-rose-950 text-rose-400 border border-rose-800" : "bg-emerald-950 text-emerald-400"}`}>
+                {truckRatio > 0.05 ? `觸發 (-${truckPenalty.toFixed(1)} km/h)` : "未觸發 (卡車 ≤5%)"}
               </span>
             </div>
             <p className="text-[11px] text-slate-400 leading-relaxed font-mono">
-              外側大貨車佔比: {(truckRatio * 100).toFixed(1)}% (門檻: 3.0%)。公式: min(8.0, truckRatio * 30)。
+              外側大貨車佔比: {(truckRatio * 100).toFixed(1)}% (門檻: 5.0%)。公式: min(4.5, (truckRatio - 0.05) * 20)。
             </p>
           </div>
 
@@ -285,12 +285,12 @@ export default function VehicleLaneAlgorithmInspector({
           <div className="p-3 rounded-xl bg-slate-900 border border-slate-800 space-y-1.5">
             <div className="flex items-center justify-between font-bold">
               <span className="text-slate-200">規則 2：假日客運專用道匯流交織</span>
-              <span className={`px-2 py-0.5 rounded text-[10px] font-mono ${isWeekendPeak && busRatio > 0.10 ? "bg-amber-950 text-amber-400 border border-amber-800" : "bg-slate-800 text-slate-400"}`}>
-                {isWeekendPeak && busRatio > 0.10 ? `觸發 (-3.5 km/h)` : isWeekendPeak ? "未觸發 (客運 ≤10%)" : "平日/非尖峰"}
+              <span className={`px-2 py-0.5 rounded text-[10px] font-mono ${isWeekendPeak && busRatio > 0.12 ? "bg-amber-950 text-amber-400 border border-amber-800" : "bg-slate-800 text-slate-400"}`}>
+                {isWeekendPeak && busRatio > 0.12 ? `觸發 (-2.0 km/h)` : isWeekendPeak ? "未觸發 (客運 ≤12%)" : "平日/非尖峰"}
               </span>
             </div>
             <p className="text-[11px] text-slate-400 leading-relaxed font-mono">
-              週末尖峰時段: {isWeekendPeak ? "是 (週六日 13~21時)" : "否"} | 客運佔比: {(busRatio * 100).toFixed(1)}% (門檻: 10.0%)。
+              週末尖峰時段: {isWeekendPeak ? "是 (週六日 13~21時)" : "否"} | 客運佔比: {(busRatio * 100).toFixed(1)}% (門檻: 12.0%)。
             </p>
           </div>
         </div>

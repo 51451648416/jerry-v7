@@ -43,15 +43,15 @@ export function calculateAdvancedLaneRecommendation(
   const busRatio = totalOuterVolume > 0 ? outerLane.volumeL / totalOuterVolume : 0;
 
   // 規則 1：大貨車爬坡壓速阻抗
-  if (truckRatio > 0.03) {
-    const truckPenalty = Math.min(8.0, truckRatio * 30);
+  if (truckRatio > 0.05) {
+    const truckPenalty = Math.min(4.5, (truckRatio - 0.05) * 20);
     effectiveOuterSpeed -= truckPenalty;
-    outerPenaltyReasons.push(`卡車佔比達 ${(truckRatio * 100).toFixed(0)}% 易受爬坡壓速`);
+    outerPenaltyReasons.push(`卡車佔比達 ${(truckRatio * 100).toFixed(1)}% 易受爬坡微幅壓速`);
   }
 
   // 規則 2：假日大客車專用道交織阻抗
-  if (isWeekendPeak && busRatio > 0.10) {
-    effectiveOuterSpeed -= 3.5;
+  if (isWeekendPeak && busRatio > 0.12) {
+    effectiveOuterSpeed -= 2.0;
     outerPenaltyReasons.push("尖峰客運高頻匯流");
   }
 

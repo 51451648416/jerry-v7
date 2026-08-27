@@ -707,11 +707,11 @@ export function runVdTrafficEstimator(
   const isWeekendPeak = isWeekendPeakTime();
   let outerSpeedPenalty = 0;
   
-  if (truckRatio > 0.03) {
-    outerSpeedPenalty += Math.min(8.0, truckRatio * 30);
+  if (truckRatio > 0.05) {
+    outerSpeedPenalty += Math.min(4.5, (truckRatio - 0.05) * 20);
   }
-  if (isWeekendPeak && busRatio > 0.10) {
-    outerSpeedPenalty += 3.5;
+  if (isWeekendPeak && busRatio > 0.12) {
+    outerSpeedPenalty += 2.0;
   }
   
   // 套用阻抗到 lane2State 
