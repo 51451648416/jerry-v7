@@ -38,6 +38,6 @@ export default async function handler(req: any, res: any) {
     confidence: 0.95,
     observationText: `${direction === "S" ? "南向坪林端" : "北向頭城端"}常態巡檢中，空間車距均勻。`,
     analyzedAt: new Date().toISOString(),
-    modelName: "gemini-2.5-flash",
+    modelName: "gemini-3.7-flash",
   });
 }

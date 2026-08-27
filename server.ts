@@ -96,7 +96,10 @@ export const DIRECTION_CCTV_CONFIGS = {
     title: "國5 北向 26K (頭城端雪隧入口段)",
     mileage: 26.0,
     direction: "N" as const,
-    url: "https://cctvn5.freeway.gov.tw/abs2mjpg/bmjpg?camera=bba9e7d7-cd6f-427f-b82d-6bff1bd0f1ed",
+    urls: [
+      "https://cctvn5.freeway.gov.tw/abs2mjpg/bmjpg?camera=bba9e7d7-cd6f-427f-b82d-6bff1bd0f1ed", // 國5 北向 26K 頭城端
+      "https://cctvn5.freeway.gov.tw/abs2mjpg/bmjpg?camera=894a824e-55f8-416b-8056-7d015f4dfb1a", // 國5 北向 25K
+    ],
     defaultVdStationId: "VD-N5-N-26.000",
     entranceName: "雪山隧道北向入口段 (頭城端 28.1K~25K)",
   },
@@ -105,7 +108,10 @@ export const DIRECTION_CCTV_CONFIGS = {
     title: "國5 南向 18K (坪林端雪隧入口段)",
     mileage: 18.0,
     direction: "S" as const,
-    url: "https://cctvn5.freeway.gov.tw/abs2mjpg/bmjpg?camera=68764cce-c1f1-4ef7-a911-b33ed35e0c6f",
+    urls: [
+      "https://cctvn5.freeway.gov.tw/abs2mjpg/bmjpg?camera=68764cce-c1f1-4ef7-a911-b33ed35e0c6f", // 國5 南向 18K 坪林端
+      "https://cctvn5.freeway.gov.tw/abs2mjpg/bmjpg?camera=0165bb74-a3e7-42ed-bda8-609f215fc9e5", // 國5 南向 19K
+    ],
     defaultVdStationId: "VD-N5-S-18.000",
     entranceName: "雪山隧道南向入口段 (坪林端 15K~18K)",
   },
@@ -132,53 +138,88 @@ let globalCctvCrossValidationCache: Record<
 /**
  * 伺服器端抓取高公局 CCTV 即時截圖 (Node.js 閉環執行，絕不傳輸圖片到前端)
  */
-async function fetchCctvSnapshotBuffer(url: string): Promise<{ buffer: Buffer; mimeType: string } | null> {
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 4000);
+async function fetchCctvSnapshotBuffer(urls: string[]): Promise<{ buffer: Buffer; mimeType: string }> {
+  let lastError: any = null;
 
-  try {
-    const response = await fetch(url, {
-      signal: controller.signal,
-      headers: {
-        "User-Agent":
-          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-        Accept: "image/jpeg, image/*, */*",
-      },
-    });
+  for (const url of urls) {
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 8000);
 
-    clearTimeout(timeoutId);
-    if (!response.ok) return null;
+      try {
+        const response = await fetch(url, {
+          signal: controller.signal,
+          headers: {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+            Accept: "image/avif,image/webp,image/apng,image/jpeg,image/*,*/*;q=0.8",
+            Referer: "https://1968.freeway.gov.tw/",
+          },
+        });
 
-    const arrayBuffer = await response.arrayBuffer();
-    const buf = Buffer.from(arrayBuffer);
-    if (buf.length < 100) return null;
+        if (!response.ok) {
+          throw new Error(`HTTP status ${response.status} from ${url}`);
+        }
 
-    // 檢查 JPEG Magic Bytes (0xFF 0xD8 -> 0xFF 0xD9)
-    if (buf[0] === 0xff && buf[1] === 0xd8) {
-      const endIdx = buf.indexOf(Buffer.from([0xff, 0xd9]));
-      if (endIdx !== -1) {
-        return { buffer: buf.subarray(0, endIdx + 2), mimeType: "image/jpeg" };
+        if (!response.body) {
+          throw new Error("Empty response body from CCTV stream");
+        }
+
+        const reader = response.body.getReader();
+        const chunks: Buffer[] = [];
+        let totalLength = 0;
+        let frameBuffer: Buffer | null = null;
+
+        try {
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            if (value && value.length > 0) {
+              chunks.push(Buffer.isBuffer(value) ? value : Buffer.from(value));
+              totalLength += value.length;
+
+              const combined = Buffer.concat(chunks);
+              const startIdx = combined.indexOf(Buffer.from([0xff, 0xd8]));
+              if (startIdx !== -1) {
+                const endIdx = combined.indexOf(Buffer.from([0xff, 0xd9]), startIdx + 2);
+                if (endIdx !== -1) {
+                  frameBuffer = combined.subarray(startIdx, endIdx + 2);
+                  await reader.cancel();
+                  break;
+                }
+              }
+
+              if (totalLength > 2 * 1024 * 1024) {
+                await reader.cancel();
+                throw new Error("Stream exceeded 2MB without finding complete JPEG");
+              }
+            }
+          }
+        } finally {
+          clearTimeout(timeoutId);
+        }
+
+        if (frameBuffer && frameBuffer.length > 100) {
+          return { buffer: frameBuffer, mimeType: "image/jpeg" };
+        }
+
+        const fullBuf = Buffer.concat(chunks);
+        if (fullBuf.length > 100) {
+          return { buffer: fullBuf, mimeType: "image/jpeg" };
+        }
+
+        throw new Error(`Buffer too small (${fullBuf.length} bytes) from ${url}`);
+      } catch (err: any) {
+        clearTimeout(timeoutId);
+        lastError = err;
+        console.warn(`CCTV fetch attempt ${attempt + 1} for ${url} failed:`, err.message || err);
+        if (attempt === 0) {
+          await new Promise((r) => setTimeout(r, 300));
+        }
       }
-      return { buffer: buf, mimeType: "image/jpeg" };
     }
-
-    // 若為 MJPEG Multipart Stream，擷取第一張 JPEG 訊框
-    const startIdx = buf.indexOf(Buffer.from([0xff, 0xd8]));
-    if (startIdx !== -1) {
-      const endIdx = buf.indexOf(Buffer.from([0xff, 0xd9]), startIdx);
-      if (endIdx !== -1 && endIdx > startIdx) {
-        return {
-          buffer: buf.subarray(startIdx, endIdx + 2),
-          mimeType: "image/jpeg",
-        };
-      }
-    }
-
-    return { buffer: buf, mimeType: "image/jpeg" };
-  } catch (err) {
-    clearTimeout(timeoutId);
-    return null;
   }
+
+  throw lastError || new Error("Failed to fetch CCTV snapshot from all candidate URLs");
 }
 
 /**
@@ -191,12 +232,18 @@ async function performCloudCctvVisionAnalysis(
     id: string;
     title: string;
     mileage: number;
-    url: string;
+    urls: string[];
   }
 ): Promise<CctvVisionAnalysisResult> {
   const cameraInfo = customCameraInfo || DIRECTION_CCTV_CONFIGS[direction];
   const ai = getGenAI();
-  const snapshot = await fetchCctvSnapshotBuffer(cameraInfo.url);
+  if (!ai) {
+    const err = new Error("GEMINI_API_KEY environment variable is not configured on server");
+    console.error("Gemini Vision Init Error:", err.message, err.stack);
+    throw err;
+  }
+
+  const snapshot = await fetchCctvSnapshotBuffer(cameraInfo.urls);
 
   const directionDesc = direction === "S" ? "南向（台北/坪林往宜蘭）" : "北向（宜蘭/頭城往台北）";
 
@@ -223,21 +270,39 @@ async function performCloudCctvVisionAnalysis(
   "observationText": "繁體中文簡述空間幾何分佈觀察（25~45字）"
 }`;
 
-      const response = await ai.models.generateContent({
-        model: "gemini-2.5-flash",
-        contents: [
-          {
-            inlineData: {
-              mimeType: snapshot.mimeType || "image/jpeg",
-              data: base64Data,
+      const modelsToTry = ["gemini-3.1-flash-lite", "gemini-3.7-flash", "gemini-flash-latest"];
+      let response: any = null;
+      let usedModel = "gemini-3.1-flash-lite";
+      let lastModelError: any = null;
+
+      for (const m of modelsToTry) {
+        try {
+          response = await ai.models.generateContent({
+            model: m,
+            contents: [
+              {
+                inlineData: {
+                  mimeType: snapshot.mimeType || "image/jpeg",
+                  data: base64Data,
+                },
+              },
+              { text: prompt },
+            ],
+            config: {
+              responseMimeType: "application/json",
             },
-          },
-          { text: prompt },
-        ],
-        config: {
-          responseMimeType: "application/json",
-        },
-      });
+          });
+          usedModel = m;
+          break;
+        } catch (mErr: any) {
+          lastModelError = mErr;
+          console.warn(`Vision model ${m} attempt failed:`, mErr.message || mErr);
+        }
+      }
+
+      if (!response) {
+        throw lastModelError || new Error("All vision models failed to return content");
+      }
 
       const text = response.text || "{}";
       const cleaned = text.replace(/```json\s*/gi, "").replace(/```\s*/g, "").trim();
@@ -257,26 +322,15 @@ async function performCloudCctvVisionAnalysis(
         mileageKm: cameraInfo.mileage,
         direction,
         analyzedAt: new Date().toISOString(),
-        modelName: "gemini-2.5-flash",
+        modelName: usedModel,
       };
-    } catch (aiErr) {
-      console.warn(`Gemini 視覺模型辨識時發生例外 (${direction}向)，切換至空間幾何安全備援:`, aiErr);
+    } catch (aiErr: any) {
+      console.error(`Gemini 視覺模型辨識時發生錯誤 (${direction}向):`, aiErr.message, aiErr.stack);
+      throw aiErr;
     }
   }
 
-  // 若無 API Key 或抓取逾時，採用空間幾何穩定啟發式分析（確保零中斷）
-  return {
-    hasAbnormalGap: false,
-    gapLane: 0,
-    confidence: 0.88,
-    observationText: `雲端視覺監控常態巡檢中（${direction === "S" ? "南向坪林端" : "北向頭城端"}），車道空間車距均勻，無異常大淨空壓速帶頭車。`,
-    cameraId: cameraInfo.id,
-    cameraTitle: cameraInfo.title,
-    mileageKm: cameraInfo.mileage,
-    direction,
-    analyzedAt: new Date().toISOString(),
-    modelName: ai ? "gemini-2.5-flash-heuristic" : "cloud-vision-standby",
-  };
+  throw new Error(`無法完成 ${direction} 向 CCTV 視覺辨識（未取得影像幀或模型初始化異常）`);
 }
 
 /**
@@ -1061,20 +1115,30 @@ async function startServer() {
   });
 
   app.get("/api/config/endpoint", async (req, res) => {
+    const defaultEndpoint = {
+      success: true,
+      endpoint: process.env.NEXT_PUBLIC_API_BASE_URL || process.env.API_BASE_URL || "https://jerry-sepia.vercel.app",
+      status: "ACTIVE",
+      version: "1.0.0",
+    };
     try {
       const redis = getRedis();
       if (redis) {
-        const cached = await redis.get("hsuehshan:config:endpoint");
+        const cached: any = await redis.get("hsuehshan:config:endpoint");
         if (cached) {
           globalSavedApiConfig = cached;
-          return res.json(cached);
+          const result = typeof cached === "object" ? { ...defaultEndpoint, ...cached } : { ...defaultEndpoint, endpoint: cached };
+          return res.json(result);
         }
       }
     } catch (err) {
       console.warn("讀取 Redis API 設定失敗，切換至本機快取:", err);
     }
-    if (!globalSavedApiConfig) return res.status(404).json({ error: "No api config found" });
-    return res.json(globalSavedApiConfig);
+    if (globalSavedApiConfig) {
+      const result = typeof globalSavedApiConfig === "object" ? { ...defaultEndpoint, ...globalSavedApiConfig } : { ...defaultEndpoint, endpoint: globalSavedApiConfig };
+      return res.json(result);
+    }
+    return res.json(defaultEndpoint);
   });
 
   app.post("/api/config/endpoint", async (req, res) => {
