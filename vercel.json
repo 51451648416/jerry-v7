@@ -4,6 +4,14 @@
   ],
   "crons": [
     {
+      "path": "/api/tdx/sync",
+      "schedule": "*/2 * * * *"
+    },
+    {
+      "path": "/api/cctv/cross-validation/step",
+      "schedule": "* * * * *"
+    },
+    {
       "path": "/api/cctv/cross-validation/analyze",
       "schedule": "*/5 * * * *"
     }

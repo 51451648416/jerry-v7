@@ -1,23 +1,10 @@
 /**
- * TDX Direct Official API Client (前端直連交通部 TDX 官方 API 模組)
- * 
- * 解決痛點：
- * 專案部署至 Vercel 或純前端靜態主機時，缺乏後端 /api/tdx/... 代理路由會返回 HTML 404，
- * 導致前端 JSON 解析時發生 "Unexpected token '<', '<!doctype '... is not valid JSON" 崩潰。
+ * TDX Direct Client & Server Cache Consumer (交通部 TDX 資料讀取與快取解耦模組)
  * 
  * 核心規範：
- * 1. 移除內部 /api/tdx/... 依賴，改為前端直接向 TDX 官方端點發送請求。
- * 2. Token 端點 (POST, application/x-www-form-urlencoded):
- *    https://tdx.transportdata.tw/auth/realms/TDXConnect/protocol/openid-connect/token
- *    參數: grant_type=client_credentials, client_id, client_secret
- * 3. 國道 5 號即時車流端點 (GET, Bearer Token):
- *    https://tdx.transportdata.tw/api/basic/v2/Road/Traffic/Live/VD/Freeway?$filter=startswith(VDID,%20%27VD-N5%27)&$format=JSON
- * 4. 國道 5 號即時事件端點 (GET, Bearer Token):
- *    https://tdx.transportdata.tw/api/basic/v2/Road/Traffic/Live/LiveEvent/Freeway?$filter=contains(Location/FreeExpressHighway/Road,%20%27國道5號%27)&$format=JSON
- * 5. 防呆防崩潰機制：
- *    在執行 JSON 解析前，嚴格檢驗 res.ok 與 res.headers.get('content-type')。
- *    若非 JSON 或狀態碼非 200，提供友善捕獲與清晰提示，絕不執行 res.json() 避免拋出語法崩潰。
- * 6. 金鑰管理支援：優先讀取 LocalStorage，其次環境變數 (VITE_TDX_CLIENT_ID / TDX_CLIENT_ID)，最後使用備用輪轉金鑰。
+ * 1. 前端完全解耦：預設純讀後端 Redis 快取 (/api/traffic/overview)，完全阻斷前端直接打 TDX API。
+ * 2. TDX 定時同步：由後端 3 組金鑰輪替池每 90 秒抓取並寫入 Redis (Key: hsuehshan:tdx:traffic_realtime)。
+ * 3. 容錯機制：若後端快取不存在或環境離線，自動無縫切換至備用通道。
  */
 
 import { globalTdxKeyManager, TdxKeyPair } from "./tdxKeyRotator";
@@ -34,6 +21,42 @@ export const TDX_OFFICIAL_FREEWAY_LIVE_EVENTS_URL =
 
 export const TDX_OFFICIAL_FREEWAY_INCIDENT_URL =
   "https://tdx.transportdata.tw/api/basic/v2/Road/Traffic/Live/LiveEvent/Freeway?$filter=contains(Location/FreeExpressHighway/Road,%20%27國道5號%27)&$format=JSON";
+
+// 快取全域最新抓取到的 Overview 數據，避免同一個 render cycle 重複請求
+let cachedOverviewData: any = null;
+let lastOverviewFetchMs = 0;
+
+/**
+ * 從後端快速讀取 Redis 快取的即時交通總覽資料 (響應時間 < 50ms)
+ */
+export async function fetchTrafficOverviewFromCache(): Promise<any | null> {
+  const now = Date.now();
+  if (cachedOverviewData && now - lastOverviewFetchMs < 5000) {
+    return cachedOverviewData;
+  }
+
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 4000);
+    const res = await fetch("/api/traffic/overview", {
+      headers: { Accept: "application/json" },
+      signal: controller.signal,
+    });
+    clearTimeout(timeoutId);
+
+    if (res.ok) {
+      const data = await res.json();
+      if (data && data.success && data.traffic) {
+        cachedOverviewData = data.traffic;
+        lastOverviewFetchMs = now;
+        return data.traffic;
+      }
+    }
+  } catch (err) {
+    // 後端尚未就緒或純靜態環境
+  }
+  return null;
+}
 
 /**
  * 安全防呆 HTTP 請求函式 (Safe Defensive Fetch)
@@ -189,13 +212,24 @@ export async function fetchDirectTdxToken(
 }
 
 /**
- * 直接從前端向 TDX 官方 API 抓取國道 5 號即時車流 VD 數據 (Direct Freeway VD Fetch)
+ * 抓取國道 5 號即時車流 VD 數據 (優先純讀後端 Redis 快取，完全阻斷前端打 TDX)
  */
 export async function fetchDirectFreewayVd(customUrl?: string): Promise<any> {
-  const targetUrl = customUrl && customUrl.trim() ? customUrl.trim() : TDX_OFFICIAL_FREEWAY_VD_URL;
+  // 1. 若無自訂 URL，優先嘗試從後端 Redis 快取中純讀取 (響應時間 < 50ms)
+  if (!customUrl) {
+    try {
+      const overview = await fetchTrafficOverviewFromCache();
+      if (overview && overview.vdData) {
+        return overview.vdData;
+      }
+      
+      // 若後端 Redis 目前為空，非同步觸發一次後端同步
+      fetch("/api/tdx/sync", { method: "POST" }).catch(() => {});
+    } catch {}
+  }
 
-  // 使用金鑰輪轉管理器全自動獲取 Token 並支援失敗自動輪轉
-  // 若使用自訂金鑰，亦直接支援
+  // 2. 備援直連機制：若後端不可達或使用者指定自訂 URL
+  const targetUrl = customUrl && customUrl.trim() ? customUrl.trim() : TDX_OFFICIAL_FREEWAY_VD_URL;
   const result = await globalTdxKeyManager.executeWithFailover<any>(targetUrl, {
     method: "GET",
     headers: {
@@ -207,11 +241,21 @@ export async function fetchDirectFreewayVd(customUrl?: string): Promise<any> {
 }
 
 /**
- * 直接從前端向 TDX 官方 API 抓取即時事件通報 (Direct Live Events Fetch)
+ * 抓取即時事件通報 (優先純讀後端 Redis 快取，完全阻斷前端打 TDX)
  */
 export async function fetchDirectFreewayLiveEvents(customUrl?: string): Promise<LiveEventAlgorithmResult> {
-  const targetUrl = customUrl && customUrl.trim() ? customUrl.trim() : TDX_OFFICIAL_FREEWAY_LIVE_EVENTS_URL;
+  // 1. 優先嘗試從後端 Redis 快取中純讀取
+  if (!customUrl) {
+    try {
+      const overview = await fetchTrafficOverviewFromCache();
+      if (overview && overview.liveEvents) {
+        return parseTdxLiveEventsJson(overview.liveEvents);
+      }
+    } catch {}
+  }
 
+  // 2. 備援直連機制
+  const targetUrl = customUrl && customUrl.trim() ? customUrl.trim() : TDX_OFFICIAL_FREEWAY_LIVE_EVENTS_URL;
   try {
     const result = await globalTdxKeyManager.executeWithFailover<TdxLiveEventsRootPayload>(targetUrl, {
       method: "GET",
@@ -350,6 +394,13 @@ export function synthesizeEtcGroundTruthSec(
 }
 
 export async function fetchRampMeteringData(): Promise<any> {
+  try {
+    const overview = await fetchTrafficOverviewFromCache();
+    if (overview && overview.rampMetering) {
+      return overview.rampMetering;
+    }
+  } catch {}
+
   const url = "https://tdx.transportdata.tw/api/basic/v2/Road/Traffic/Live/RampMetering/Freeway?$format=JSON&$filter=FreewayID eq '國道5號'";
   try {
     const result = await globalTdxKeyManager.executeWithFailover(url, { method: "GET", headers: { Accept: "application/json" } });

@@ -13,6 +13,9 @@ import {
   HSUEHSHAN_INSPECTION_NODES,
   getInspectionNodeById,
 } from "./src/data/cctvInspectionConfig";
+import handleTdxSync from "./api/tdx/sync";
+import handleCctvStep from "./api/cctv/cross-validation/step";
+import handleTrafficOverview from "./api/traffic/overview";
 
 // Lazy Upstash Redis Client with Safe Fallback
 let redisClient: Redis | null = null;
@@ -1353,6 +1356,17 @@ async function startServer() {
 
   app.get("/api/cctv/cross-validation/analyze", handleCrossValidationAnalyze);
   app.post("/api/cctv/cross-validation/analyze", handleCrossValidationAnalyze);
+
+  // TDX Key Rotation Sync (90s Background Cycle -> Redis hsuehshan:tdx:traffic_realtime)
+  app.get("/api/tdx/sync", handleTdxSync);
+  app.post("/api/tdx/sync", handleTdxSync);
+
+  // Single-step CCTV Inspection (1 camera per step, <4s execution, Redis hsuehshan:cctv:cam:*)
+  app.get("/api/cctv/cross-validation/step", handleCctvStep);
+  app.post("/api/cctv/cross-validation/step", handleCctvStep);
+
+  // Aggregated Read-Only Traffic & CCTV Overview (<50ms from Redis)
+  app.get("/api/traffic/overview", handleTrafficOverview);
 
   // Unified endpoint for Freeway VD data with Automatic Key Rotation, Failover & Advanced Lane Recommendation
   const handleFreewayVd = async (req: express.Request, res: express.Response) => {
