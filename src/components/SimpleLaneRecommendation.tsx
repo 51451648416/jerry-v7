@@ -364,7 +364,7 @@ export default function SimpleLaneRecommendation({
             {/* 子分頁內容 */}
             <div className="pt-2">
               {greySubTab === "vehicle_algo" && (
-                <VehicleLaneAlgorithmInspector estimatorOutput={estimatorOutput} />
+                <VehicleLaneAlgorithmInspector estimatorOutput={estimatorOutput} direction={direction} />
               )}
 
               {greySubTab === "theory" && estState && (

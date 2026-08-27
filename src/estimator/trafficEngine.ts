@@ -598,6 +598,52 @@ export function runVdTrafficEstimator(
       cumTime > 0 ? lane2Trajectory.totalDistanceKm / (cumTime / 3600) : lane2Trajectory.equivalentTravelSpeedKmh;
   }
 
+  // 雲端 CCTV 影像辨識與地面 VD 交叉驗證成立之微元流速上限與旅行時間重算 (100% 採用地面實測值)
+  const cctvCrossValidation: any =
+    rawApiPayload?.cctvCrossValidation || rawApiPayload?.advancedLaneRecommendation?.cctvCrossValidation;
+
+  if (cctvCrossValidation?.isVerifiedTurtleCar) {
+    if (cctvCrossValidation.affectedLane === 2 && lane2Trajectory && Array.isArray(lane2Trajectory.segments)) {
+      const bound = Math.max(MIN_PHYSICAL_CRAWL_SPEED_KMH, cctvCrossValidation.speedBoundAppliedKmh || 55);
+      let cumTime = 0;
+      lane2Trajectory.segments = lane2Trajectory.segments.map((seg: RoadSegmentSlice) => {
+        const isAffectedSection = Math.abs(seg.startMileageKm - 26.0) < 3.0 || Math.abs(seg.endMileageKm - 26.0) < 3.0;
+        const adjustedSpeed = isAffectedSection ? Math.min(seg.estimatedSegmentSpeedKmh, bound) : seg.estimatedSegmentSpeedKmh;
+        const finalSpeed = Math.max(MIN_PHYSICAL_CRAWL_SPEED_KMH, adjustedSpeed);
+        const segTime = (seg.lengthKm / finalSpeed) * 3600;
+        cumTime += segTime;
+        return {
+          ...seg,
+          estimatedSegmentSpeedKmh: finalSpeed,
+          segmentTravelTimeSec: segTime,
+          cumulativeArrivalSec: cumTime,
+        };
+      });
+      lane2Trajectory.totalTravelTimeSec = cumTime;
+      lane2Trajectory.equivalentTravelSpeedKmh =
+        cumTime > 0 ? lane2Trajectory.totalDistanceKm / (cumTime / 3600) : lane2Trajectory.equivalentTravelSpeedKmh;
+    } else if (cctvCrossValidation.affectedLane === 1 && lane1Trajectory && Array.isArray(lane1Trajectory.segments)) {
+      const bound = Math.max(MIN_PHYSICAL_CRAWL_SPEED_KMH, cctvCrossValidation.speedBoundAppliedKmh || 55);
+      let cumTime = 0;
+      lane1Trajectory.segments = lane1Trajectory.segments.map((seg: RoadSegmentSlice) => {
+        const isAffectedSection = Math.abs(seg.startMileageKm - 26.0) < 3.0 || Math.abs(seg.endMileageKm - 26.0) < 3.0;
+        const adjustedSpeed = isAffectedSection ? Math.min(seg.estimatedSegmentSpeedKmh, bound) : seg.estimatedSegmentSpeedKmh;
+        const finalSpeed = Math.max(MIN_PHYSICAL_CRAWL_SPEED_KMH, adjustedSpeed);
+        const segTime = (seg.lengthKm / finalSpeed) * 3600;
+        cumTime += segTime;
+        return {
+          ...seg,
+          estimatedSegmentSpeedKmh: finalSpeed,
+          segmentTravelTimeSec: segTime,
+          cumulativeArrivalSec: cumTime,
+        };
+      });
+      lane1Trajectory.totalTravelTimeSec = cumTime;
+      lane1Trajectory.equivalentTravelSpeedKmh =
+        cumTime > 0 ? lane1Trajectory.totalDistanceKm / (cumTime / 3600) : lane1Trajectory.equivalentTravelSpeedKmh;
+    }
+  }
+
   // Lane 1 Speeds & Aggregations (Full precision internally)
   const lane1Speeds = validatedRecords.map((d) => d.lanes[0]?.speedKmh || 0);
   const lane1Flows = validatedRecords.map((d) => d.lanes[0]?.flowVehPerHour || 0);
@@ -1048,6 +1094,7 @@ export function runVdTrafficEstimator(
 
   estimated_state.corridorState = corridorState;
   estimated_state.departureRecommendation = departureRecommendation;
+  estimated_state.cctvCrossValidation = cctvCrossValidation;
 
   // Step 5.6: Compute Ramp Metering & Mainline 30.5K Pulse System
   const comprehensiveMeteringState = evaluateFreeway5MeteringSystem(

@@ -367,6 +367,9 @@ export interface EstimatedState {
 
   // 國道 5 號北向匝道儀控與頭城 30.5K 主線號誌管制 (Pulse & Three-Tier Model)
   comprehensiveMeteringState?: import("./estimator/rampMeteringEngine").ComprehensiveMeteringState;
+
+  // 雲端 CCTV 影像辨識與地面 VD 交叉驗證狀態 (Cloud Vision & Ground VD Cross Validation)
+  cctvCrossValidation?: CctvVdCrossValidationState;
 }
 
 export interface CorridorInterchange {
@@ -664,6 +667,41 @@ export interface CctvCamera {
   url: string;
 }
 
+export interface CctvVisionAnalysisResult {
+  hasAbnormalGap: boolean;
+  gapLane: 0 | 1 | 2; // 0: None, 1: Inner (Lane 1), 2: Outer (Lane 2)
+  confidence: number;
+  observationText: string;
+  cameraId?: string;
+  cameraTitle?: string;
+  mileageKm?: number;
+  analyzedAt: string;
+  modelName?: string;
+}
+
+export interface CctvVdCrossValidationState {
+  status: "STANDBY" | "ACTIVE_VERIFIED" | "NORMAL_FLOW" | "UNCONFIRMED";
+  isVerifiedTurtleCar: boolean;
+  affectedLane: 0 | 1 | 2; // 0: None, 1: Inner, 2: Outer
+  cctvResult: CctvVisionAnalysisResult;
+  vdGroundTruth: {
+    vdStationId: string;
+    mileageKm: number;
+    innerSpeedKmh: number;
+    outerSpeedKmh: number;
+    speedDiffKmh: number;
+  };
+  speedBoundAppliedKmh?: number;
+  recalculatedTravelTimeSec?: number;
+  cacheTtlRemainingSec: number;
+  lastUpdated: string;
+  systemHealth: {
+    geminiVisionStatus: "AVAILABLE" | "FALLBACK" | "SIMULATED";
+    cctvStreamStatus: "LIVE_OK" | "FALLBACK_CACHED" | "STANDBY";
+    vdStationStatus: "SYNCED" | "INTERPOLATED";
+  };
+}
+
 export interface GroundTruthRecord {
   id?: string;
   tripId?: string;
@@ -771,5 +809,41 @@ export interface EtcTravelTimeState {
   endKm: number;
   actualTravelTimeSec: number;
   updateTime: string;
+}
+
+export interface CctvVisionAnalysisResult {
+  hasAbnormalGap: boolean;
+  gapLane: 0 | 1 | 2; // 0: None, 1: Inner (Lane 1), 2: Outer (Lane 2)
+  confidence: number;
+  observationText: string;
+  cameraId?: string;
+  cameraTitle?: string;
+  mileageKm?: number;
+  direction?: Direction;
+  analyzedAt: string;
+  modelName?: string;
+}
+
+export interface CctvVdCrossValidationState {
+  status: "STANDBY" | "ACTIVE_VERIFIED" | "NORMAL_FLOW" | "UNCONFIRMED";
+  isVerifiedTurtleCar: boolean;
+  affectedLane: 0 | 1 | 2; // 0: None, 1: Inner, 2: Outer
+  direction?: Direction;
+  cctvResult: CctvVisionAnalysisResult;
+  vdGroundTruth: {
+    vdStationId: string;
+    mileageKm: number;
+    innerSpeedKmh: number;
+    outerSpeedKmh: number;
+    speedDiffKmh: number;
+  };
+  speedBoundAppliedKmh?: number;
+  cacheTtlRemainingSec: number;
+  lastUpdated: string;
+  systemHealth: {
+    geminiVisionStatus: "AVAILABLE" | "FALLBACK" | "SIMULATED";
+    cctvStreamStatus: "LIVE_OK" | "FALLBACK_CACHED" | "STANDBY";
+    vdStationStatus: "SYNCED" | "INTERPOLATED";
+  };
 }
 

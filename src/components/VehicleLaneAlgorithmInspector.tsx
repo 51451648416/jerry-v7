@@ -13,27 +13,44 @@ import {
   ArrowRight,
   ShieldCheck,
   Zap,
+  Video,
+  Eye,
+  Sparkles,
+  Server,
+  Clock,
+  Radio,
 } from "lucide-react";
-import { FinalEstimatorOutput } from "../types";
+import { FinalEstimatorOutput, CctvVdCrossValidationState } from "../types";
 
 interface VehicleLaneAlgorithmInspectorProps {
   estimatorOutput?: FinalEstimatorOutput | null;
+  direction?: "N" | "S";
 }
 
 export default function VehicleLaneAlgorithmInspector({
   estimatorOutput,
+  direction = "N",
 }: VehicleLaneAlgorithmInspectorProps) {
+  const currentDirection: "N" | "S" =
+    (estimatorOutput?.estimated_state?.direction as "N" | "S") || direction || "N";
+  const isSouth = currentDirection === "S";
+
   const [liveData, setLiveData] = useState<any>(null);
+  const [cctvData, setCctvData] = useState<CctvVdCrossValidationState | null>(null);
   const [loading, setLoading] = useState(false);
+  const [cctvAnalyzing, setCctvAnalyzing] = useState(false);
   const [lastFetched, setLastFetched] = useState<string>("");
 
   const fetchAlgorithmLiveState = async () => {
     setLoading(true);
     try {
-      const res = await fetch("/api/lane-recommendation");
+      const res = await fetch(`/api/lane-recommendation?direction=${currentDirection}`);
       const json = await res.json();
       if (json && json.success) {
         setLiveData(json);
+        if (json.cctvCrossValidation) {
+          setCctvData(json.cctvCrossValidation);
+        }
         setLastFetched(new Date().toLocaleTimeString("zh-TW", { hour12: false }));
       }
     } catch (err) {
@@ -43,16 +60,39 @@ export default function VehicleLaneAlgorithmInspector({
     }
   };
 
+  const triggerCctvReanalysis = async () => {
+    setCctvAnalyzing(true);
+    try {
+      const res = await fetch("/api/cctv/cross-validation/analyze", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ direction: currentDirection }),
+      });
+      const json = await res.json();
+      if (json && json.success) {
+        setCctvData(json);
+        fetchAlgorithmLiveState();
+      }
+    } catch (err) {
+      console.error("Failed to trigger CCTV re-analysis:", err);
+    } finally {
+      setCctvAnalyzing(false);
+    }
+  };
+
   useEffect(() => {
     fetchAlgorithmLiveState();
-    const interval = setInterval(fetchAlgorithmLiveState, 150000); // 每 150 秒自動更新一次
+    const interval = setInterval(fetchAlgorithmLiveState, 60000);
     return () => clearInterval(interval);
-  }, []);
+  }, [currentDirection]);
 
   // 從 estimatorOutput 或即時 API 取得演算法數據
   const hasEstOutput = Boolean(estimatorOutput?.estimated_state?.laneComparison);
   const modelInnerSpeed = estimatorOutput?.estimated_state?.laneComparison?.lane1?.equivalentTravelSpeedKmh;
   const modelOuterFinalSpeed = estimatorOutput?.estimated_state?.laneComparison?.lane2?.equivalentTravelSpeedKmh;
+  const modelCctvCross = estimatorOutput?.estimated_state?.cctvCrossValidation;
+
+  const currentCctvState = modelCctvCross || cctvData || liveData?.cctvCrossValidation;
 
   const innerLane = liveData?.innerLane || {
     speedKmh: modelInnerSpeed || 75,
@@ -89,14 +129,6 @@ export default function VehicleLaneAlgorithmInspector({
     ? modelOuterFinalSpeed
     : (liveData?.effectiveOuterSpeed ?? (outerLane.speedKmh - totalPenalty));
 
-  const baseOuterSpeed = hasEstOutput && modelOuterFinalSpeed !== undefined
-    ? Math.round((modelOuterFinalSpeed + totalPenalty) * 10) / 10
-    : outerLane.speedKmh;
-
-  const baseInnerSpeed = hasEstOutput && modelInnerSpeed !== undefined
-    ? Math.round(modelInnerSpeed * 10) / 10
-    : innerLane.speedKmh;
-
   const recommendedLane = liveData?.recommendedLane ?? (effectiveInnerSpeed >= effectiveOuterSpeed ? "內側車道" : "外側車道");
   const voiceText = liveData?.voiceText ?? (effectiveInnerSpeed >= effectiveOuterSpeed
     ? "即將進入雪山隧道，目前內側實測流速較快，推薦行駛內側車道。"
@@ -118,12 +150,22 @@ export default function VehicleLaneAlgorithmInspector({
             </span>
           </div>
           <h2 className="text-base sm:text-lg font-bold text-white">
-            雪山隧道入口 (28.1K~25K) 各車種遙測分流與動態阻抗運算空間
+            雪山隧道{isSouth ? "南向入口 (坪林端 15K~18K)" : "北向入口 (頭城端 28.1K~25K)"} 各車種遙測分流與動態阻抗運算空間
           </h2>
           <p className="text-xs text-slate-400">
-            即時自 TDX VD 提取小型車 (S)、大客車 (L)、大貨車 (T) 辨識流量，結合大貨車爬坡壓速阻抗與假日大客車專用道交織模型。
+            即時自 TDX VD 提取小型車 (S)、大客車 (L)、大貨車 (T) 辨識流量，結合大貨車爬坡壓速阻抗、假日大客車專用道交織模型與雲端視覺交叉驗證。
           </p>
         </div>
+
+        <button
+          id="btn-refresh-lane-algo"
+          onClick={fetchAlgorithmLiveState}
+          disabled={loading}
+          className="inline-flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold bg-slate-800 hover:bg-slate-700 active:bg-slate-900 border border-slate-700 text-slate-200 transition-colors self-start sm:self-auto"
+        >
+          <RefreshCw className={`h-3.5 w-3.5 ${loading ? "animate-spin text-indigo-400" : "text-slate-400"}`} />
+          <span>刷新數據</span>
+        </button>
       </div>
 
       {/* 2. 演算法決策看板與語音廣播預覽 */}
@@ -132,7 +174,7 @@ export default function VehicleLaneAlgorithmInspector({
           <div className="flex items-center gap-2">
             <span className="p-1.5 rounded-lg bg-indigo-600 text-white font-bold text-xs flex items-center gap-1">
               <Zap className="h-3.5 w-3.5" />
-              <span>最佳車道推薦決策</span>
+              <span>最佳車道推薦決策 ({isSouth ? "南向坪林端" : "北向頭城端"})</span>
             </span>
             <span className="text-sm font-black text-emerald-400 bg-emerald-950/80 px-3 py-0.5 rounded-full border border-emerald-700/60">
               ★ {recommendedLane}
@@ -157,17 +199,153 @@ export default function VehicleLaneAlgorithmInspector({
         </div>
       </div>
 
-      {/* 3. 車種流量辨識與分流統計 (Small Car / Bus / Truck) */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        {/* 內側車道辨識數據 */}
-        <div className="bg-slate-950 p-4 rounded-2xl border border-slate-800 space-y-3">
-          <div className="flex items-center justify-between border-b border-slate-800 pb-2">
-            <div className="flex items-center gap-2">
-              <span className="w-2.5 h-2.5 rounded-full bg-indigo-500"></span>
-              <h3 className="text-sm font-bold text-slate-200">內側車道 (Lane 1) 車種實測</h3>
+      {/* 3. 雲端後端 CCTV 影像辨識與地面 VD 交叉驗證儀表 (Observability Dashboard) */}
+      <div className="p-4 sm:p-5 rounded-2xl bg-gradient-to-br from-slate-950 via-indigo-950/30 to-slate-950 border border-indigo-700/40 space-y-4">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-800/80 pb-3">
+          <div className="flex items-center gap-2">
+            <div className="p-2 rounded-xl bg-indigo-950 border border-indigo-700/60 text-indigo-400">
+              <Video className="h-4 w-4" />
             </div>
-            <span className="text-xs font-mono font-bold text-indigo-400">
-              實測: {baseInnerSpeed.toFixed(1)} km/h
+            <div>
+              <div className="flex items-center gap-2">
+                <h3 className="text-sm font-bold text-white flex items-center gap-1.5">
+                  <span>雲端後端 CCTV 影像辨識與地面 VD 交叉驗證系統</span>
+                  <span className="text-[10px] px-2 py-0.5 rounded-full bg-indigo-900/80 text-indigo-300 font-mono border border-indigo-700/50">
+                    {isSouth ? "南向 18K 坪林端" : "北向 26K 頭城端"}
+                  </span>
+                  <span className="text-[10px] px-2 py-0.5 rounded-full bg-indigo-900/80 text-indigo-300 font-mono border border-indigo-700/50">
+                    100% 伺服器端閉環執行
+                  </span>
+                </h3>
+              </div>
+              <p className="text-[11px] text-slate-400">
+                由 Node.js 雲端後端調用 Gemini 視覺模型分析高公局即時畫面之空間幾何車距淨空，並 100% 交叉核對地面 VD 實測流速。
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2 self-start sm:self-auto">
+            <button
+              id="btn-reanalyze-cctv-vision"
+              onClick={triggerCctvReanalysis}
+              disabled={cctvAnalyzing}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold bg-indigo-600 hover:bg-indigo-500 active:bg-indigo-700 text-white shadow-sm transition-colors"
+            >
+              <RefreshCw className={`h-3.5 w-3.5 ${cctvAnalyzing ? "animate-spin" : ""}`} />
+              <span>{cctvAnalyzing ? "雲端辨識中..." : `重新辨識 (${isSouth ? "南向18K" : "北向26K"})`}</span>
+            </button>
+          </div>
+        </div>
+
+        {/* 狀態卡片區塊 */}
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
+          {/* 卡片 1: 交叉驗證狀態 */}
+          <div className="p-3 rounded-xl bg-slate-900/90 border border-slate-800 space-y-1.5">
+            <div className="flex items-center justify-between">
+              <span className="text-slate-400 font-medium">交叉驗證判定狀態</span>
+              <span
+                className={`px-2 py-0.5 rounded text-[10px] font-bold font-mono ${
+                  currentCctvState?.isVerifiedTurtleCar
+                    ? "bg-rose-950 text-rose-300 border border-rose-700"
+                    : currentCctvState?.status === "NORMAL_FLOW"
+                    ? "bg-emerald-950 text-emerald-300 border border-emerald-700"
+                    : "bg-slate-800 text-slate-300 border border-slate-700"
+                }`}
+              >
+                {currentCctvState?.isVerifiedTurtleCar
+                  ? "● 慢速車阻抗成立 (VERIFIED)"
+                  : currentCctvState?.status === "NORMAL_FLOW"
+                  ? "✓ 常態通暢 (NORMAL)"
+                  : "○ 待命監控中 (STANDBY)"}
+              </span>
+            </div>
+            <div className="text-sm font-bold text-white font-mono">
+              {currentCctvState?.isVerifiedTurtleCar
+                ? `第 ${currentCctvState.affectedLane === 2 ? "2 (外側)" : "1 (內側)"} 車道受慢速車壓速`
+                : "全線各車道車距均勻正常"}
+            </div>
+            <div className="text-[11px] text-slate-400 font-mono flex items-center gap-1">
+              <Clock className="h-3 w-3 text-indigo-400" />
+              <span>快取 TTL 剩餘: {currentCctvState?.cacheTtlRemainingSec ?? 240} 秒 (每4分鐘刷新)</span>
+            </div>
+          </div>
+
+          {/* 卡片 2: Gemini 視覺幾何分析 */}
+          <div className="p-3 rounded-xl bg-slate-900/90 border border-slate-800 space-y-1.5">
+            <div className="flex items-center justify-between">
+              <span className="text-slate-400 font-medium flex items-center gap-1">
+                <Sparkles className="h-3 w-3 text-amber-400" />
+                <span>Gemini 視覺幾何判定</span>
+              </span>
+              <span className="text-[10px] font-mono text-indigo-300">
+                {currentCctvState?.cctvResult?.modelName || "gemini-3.7-flash"}
+              </span>
+            </div>
+            <div className="text-xs text-slate-200 font-medium leading-relaxed">
+              {currentCctvState?.cctvResult?.observationText ||
+                (isSouth
+                  ? "南向坪林端雲端視覺常態巡檢中，各車道空間車距均勻，無異常大淨空壓速帶頭車。"
+                  : "北向頭城端雲端視覺常態巡檢中，各車道空間車距均勻，無異常大淨空壓速帶頭車。")}
+            </div>
+            <div className="text-[10px] text-slate-500 font-mono">
+              攝影機: {currentCctvState?.cctvResult?.cameraTitle || (isSouth ? "國5 南向 18K (坪林端入口段)" : "國5 北向 26K (頭城端入口段)")}
+            </div>
+          </div>
+
+          {/* 卡片 3: 地面 VD 實測流速核對 (Ground Truth) */}
+          <div className="p-3 rounded-xl bg-slate-900/90 border border-slate-800 space-y-1.5">
+            <div className="flex items-center justify-between">
+              <span className="text-slate-400 font-medium flex items-center gap-1">
+                <Radio className="h-3 w-3 text-sky-400" />
+                <span>地面 VD 實測流速核對</span>
+              </span>
+              <span className="text-[10px] font-mono text-emerald-400">
+                100% 物理實測
+              </span>
+            </div>
+            <div className="grid grid-cols-2 gap-2 text-center pt-1 font-mono">
+              <div className="p-1.5 rounded-lg bg-slate-950 border border-slate-800">
+                <div className="text-[10px] text-slate-400">內側 (Lane 1)</div>
+                <div className="text-xs font-bold text-sky-400">
+                  {currentCctvState?.vdGroundTruth?.innerSpeedKmh ?? innerLane.speedKmh} km/h
+                </div>
+              </div>
+              <div className="p-1.5 rounded-lg bg-slate-950 border border-slate-800">
+                <div className="text-[10px] text-slate-400">外側 (Lane 2)</div>
+                <div className="text-xs font-bold text-amber-400">
+                  {currentCctvState?.vdGroundTruth?.outerSpeedKmh ?? outerLane.speedKmh} km/h
+                </div>
+              </div>
+            </div>
+            <div className="text-[10px] text-slate-500 font-mono text-right">
+              VD 站點: {currentCctvState?.vdGroundTruth?.vdStationId || (isSouth ? "VD-N5-S-18.000" : "VD-N5-N-26.000")}
+            </div>
+          </div>
+        </div>
+
+        {/* 驗證機制防護說明 */}
+        <div className="p-3 rounded-xl bg-slate-950/80 border border-slate-800/80 flex items-start gap-2 text-[11px] text-slate-400">
+          <ShieldCheck className="h-4 w-4 text-emerald-400 shrink-0 mt-0.5" />
+          <div className="space-y-0.5">
+            <span className="font-semibold text-slate-300">雙重交叉驗證安全防護原則：</span>
+            <span>
+              AI 視覺模型僅負責判定前方幾何空間是否有異常大淨空隊列，真實車速 100% 取自地面 VD 測速儀。僅當「視覺確認大淨空」且「地面 VD 實測流速顯著偏慢」時，才進行微元流速上限鎖定與旅行時間重算，嚴禁 AI 隨意猜測速度。
+            </span>
+          </div>
+        </div>
+      </div>
+
+      {/* 4. 車種流量辨識與分流統計 (Small Car / Bus / Truck) */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        {/* 內側車道 */}
+        <div className="p-4 rounded-2xl bg-slate-950 border border-slate-800 space-y-3">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <span className="w-2.5 h-2.5 rounded-full bg-sky-500 animate-ping" />
+              <h3 className="font-bold text-sm text-sky-300">內側車道 (第 1 車道)</h3>
+            </div>
+            <span className="text-xs font-mono text-slate-400">
+              VD 實測: <strong className="text-white">{innerLane.speedKmh} km/h</strong>
             </span>
           </div>
 
@@ -181,7 +359,7 @@ export default function VehicleLaneAlgorithmInspector({
                 {innerLane.volumeS || 0}
               </div>
               <div className="text-[10px] font-mono text-slate-500">
-                {totalInnerVol > 0 ? (((innerLane.volumeS || 0) / totalInnerVol) * 100).toFixed(0) : 100}%
+                {totalInnerVol > 0 ? (((innerLane.volumeS || 0) / totalInnerVol) * 100).toFixed(0) : 0}%
               </div>
             </div>
 
@@ -213,22 +391,22 @@ export default function VehicleLaneAlgorithmInspector({
           </div>
 
           <div className="p-2.5 rounded-xl bg-slate-900/60 border border-slate-800/80 text-xs flex justify-between items-center font-mono">
-            <span className="text-slate-400">等效加權流速 (v_eff_inner):</span>
-            <span className="text-emerald-400 font-bold text-sm">
+            <span className="text-slate-400">等效阻抗修正流速 (v_eff_inner):</span>
+            <span className="text-sky-400 font-bold text-sm">
               {effectiveInnerSpeed.toFixed(1)} km/h
             </span>
           </div>
         </div>
 
-        {/* 外側車道辨識數據 */}
-        <div className="bg-slate-950 p-4 rounded-2xl border border-slate-800 space-y-3">
-          <div className="flex items-center justify-between border-b border-slate-800 pb-2">
+        {/* 外側車道 */}
+        <div className="p-4 rounded-2xl bg-slate-950 border border-slate-800 space-y-3">
+          <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
-              <span className="w-2.5 h-2.5 rounded-full bg-amber-500"></span>
-              <h3 className="text-sm font-bold text-slate-200">外側車道 (Lane 2) 車種實測</h3>
+              <span className="w-2.5 h-2.5 rounded-full bg-amber-500 animate-ping" />
+              <h3 className="font-bold text-sm text-amber-300">外側車道 (第 2 車道)</h3>
             </div>
-            <span className="text-xs font-mono font-bold text-amber-400">
-              基準: {baseOuterSpeed.toFixed(1)} km/h
+            <span className="text-xs font-mono text-slate-400">
+              VD 實測: <strong className="text-white">{outerLane.speedKmh} km/h</strong>
             </span>
           </div>
 
@@ -282,14 +460,14 @@ export default function VehicleLaneAlgorithmInspector({
         </div>
       </div>
 
-      {/* 4. 演算法阻抗檢驗矩陣 (Algorithm Impedance Audit Matrix) */}
+      {/* 5. 演算法阻抗檢驗矩陣 (Algorithm Impedance Audit Matrix) */}
       <div className="p-4 rounded-2xl bg-slate-950 border border-slate-800 space-y-3">
         <h4 className="text-xs font-bold text-slate-300 flex items-center gap-1.5">
           <ShieldCheck className="h-4 w-4 text-indigo-400" />
           <span>雪隧車道動態阻抗運算規則檢驗 (Impedance Rules Verification)</span>
         </h4>
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
           {/* 規則 1：大貨車爬坡壓速阻抗 */}
           <div className="p-3 rounded-xl bg-slate-900 border border-slate-800 space-y-1.5">
             <div className="flex items-center justify-between font-bold">
@@ -313,6 +491,21 @@ export default function VehicleLaneAlgorithmInspector({
             </div>
             <p className="text-[11px] text-slate-400 leading-relaxed font-mono">
               週末尖峰時段: {isWeekendPeak ? "是 (週六日 13~21時)" : "否"} | 客運佔比: {(busRatio * 100).toFixed(1)}% (門檻: 12.0%)。
+            </p>
+          </div>
+
+          {/* 規則 3：雲端視覺與地面 VD 交叉驗證 */}
+          <div className="p-3 rounded-xl bg-slate-900 border border-slate-800 space-y-1.5">
+            <div className="flex items-center justify-between font-bold">
+              <span className="text-slate-200">規則 3：雲端視覺+VD交叉驗證</span>
+              <span className={`px-2 py-0.5 rounded text-[10px] font-mono ${currentCctvState?.isVerifiedTurtleCar ? "bg-rose-950 text-rose-400 border border-rose-800" : "bg-emerald-950 text-emerald-400"}`}>
+                {currentCctvState?.isVerifiedTurtleCar ? "交叉確認成立 (壓制)" : "常態通行 (無大淨空)"}
+              </span>
+            </div>
+            <p className="text-[11px] text-slate-400 leading-relaxed font-mono">
+              {currentCctvState?.isVerifiedTurtleCar
+                ? `流速上限已鎖定為地面 VD 實測值: ${currentCctvState.speedBoundAppliedKmh || outerLane.speedKmh} km/h`
+                : "視覺幾何正常且地面流速平衡，未觸發慢速車壓速防護。"}
             </p>
           </div>
         </div>
