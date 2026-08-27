@@ -356,6 +356,99 @@ function classifyCongestion(
   };
 }
 
+// --- Added Vehicle Type Extraction & Penalty Logic ---
+
+function isWeekendPeakTime(date: Date = new Date()): boolean {
+  try {
+    const tzString = date.toLocaleString("en-US", { timeZone: "Asia/Taipei" });
+    const localDate = new Date(tzString);
+    const day = localDate.getDay(); 
+    const hour = localDate.getHours();
+    return (day === 0 || day === 6) && hour >= 13 && hour <= 21;
+  } catch {
+    const day = date.getDay();
+    const hour = date.getHours();
+    return (day === 0 || day === 6) && hour >= 13 && hour <= 21;
+  }
+}
+
+function extractVehicleTypesFromRaw(rawApiPayload: any, direction: string) {
+  let innerVolS = 0, innerVolL = 0, innerVolT = 0;
+  let outerVolS = 0, outerVolL = 0, outerVolT = 0;
+  
+  const rawList: any[] = Array.isArray(rawApiPayload?.VDLives)
+    ? rawApiPayload.VDLives
+    : Array.isArray(rawApiPayload)
+    ? rawApiPayload
+    : Array.isArray(rawApiPayload?.data)
+    ? rawApiPayload.data
+    : [];
+    
+  for (const item of rawList) {
+    if (!item) continue;
+    const vdid = String(item.VDID || item.detectorId || "");
+    const isTargetDir = vdid.includes(`-${direction}-`) || vdid.includes(`-${direction}`) || String(item.Direction || "").toUpperCase() === direction;
+    if (!isTargetDir) continue;
+    
+    // 聚焦雪隧北向/南向入口段
+    let mileageKm = 0;
+    if (typeof item.Mileage === "number") mileageKm = item.Mileage;
+    else if (typeof item.mileageKm === "number") mileageKm = item.mileageKm;
+    else {
+      const match = vdid.match(/(\d+(?:\.\d+)?)/);
+      if (match) mileageKm = parseFloat(match[1]);
+    }
+    
+    const isInEntranceBounds = direction === "N" 
+      ? ((mileageKm >= 24.8 && mileageKm <= 28.5) || vdid.includes("28.1") || vdid.includes("28.0") || vdid.includes("27.5") || vdid.includes("27.0") || vdid.includes("26.0") || vdid.includes("25.0"))
+      : ((mileageKm >= 14.0 && mileageKm <= 17.5) || vdid.includes("15.1") || vdid.includes("15.0") || vdid.includes("16.0") || vdid.includes("17.0"));
+    
+    if (!isInEntranceBounds && mileageKm > 0) continue;
+    
+    const lanes =
+      (Array.isArray(item.LinkFlows) && item.LinkFlows[0] && Array.isArray(item.LinkFlows[0].Lanes)
+        ? item.LinkFlows[0].Lanes
+        : Array.isArray(item.Lanes)
+        ? item.Lanes
+        : Array.isArray(item.lanes)
+        ? item.lanes
+        : []) as any[];
+
+    lanes.forEach((laneObj: any, lIdx: number) => {
+      let isInner = false;
+      if (laneObj.LaneID !== undefined && laneObj.LaneID !== null) {
+        const numId = Number(laneObj.LaneID);
+        isInner = numId === 1 || numId === 0;
+      } else {
+        isInner = lIdx === 0;
+      }
+
+      let vS = 0, vL = 0, vT = 0;
+      if (Array.isArray(laneObj.Vehicles)) {
+        laneObj.Vehicles.forEach((v: any) => {
+          const vol = typeof v.Volume === "number" ? v.Volume : 0;
+          const vType = String(v.VehicleType || "").toUpperCase();
+          if (vType === "S" || vType === "SMALL" || vType === "1" || vType === "CAR") vS += vol;
+          else if (vType === "L" || vType === "LARGE" || vType === "2" || vType === "BUS") vL += vol;
+          else if (vType === "T" || vType === "TRUCK" || vType === "3" || vType === "TRAILER" || vType === "TT") vT += vol;
+          else vS += vol;
+        });
+      } else if (typeof laneObj.Volume === "number") {
+        vS = laneObj.Volume;
+      }
+
+      if (isInner) {
+        innerVolS += vS; innerVolL += vL; innerVolT += vT;
+      } else {
+        outerVolS += vS; outerVolL += vL; outerVolT += vT;
+      }
+    });
+  }
+  return { innerVolS, innerVolL, innerVolT, outerVolS, outerVolL, outerVolT };
+}
+
+// ----------------------------------------------------
+
 /**
  * Main Traffic State Estimator
  * Guaranteed Single Source of Truth with Full Mathematical Precision.
@@ -603,6 +696,33 @@ export function runVdTrafficEstimator(
       lane2Trajectory.equivalentTravelSpeedKmh > 0
         ? lane2State.flowVehPerHour / lane2Trajectory.equivalentTravelSpeedKmh
         : 0;
+  }
+
+  // 疊加小客車與大客車/大貨車的車種壓速阻抗到原本的外側車道演算法上
+  const vehStats = extractVehicleTypesFromRaw(rawApiPayload, direction);
+  const totalOuterVol = vehStats.outerVolS + vehStats.outerVolL + vehStats.outerVolT;
+  const truckRatio = totalOuterVol > 0 ? vehStats.outerVolT / totalOuterVol : 0;
+  const busRatio = totalOuterVol > 0 ? vehStats.outerVolL / totalOuterVol : 0;
+  
+  const isWeekendPeak = isWeekendPeakTime();
+  let outerSpeedPenalty = 0;
+  
+  if (truckRatio > 0.03) {
+    outerSpeedPenalty += Math.min(8.0, truckRatio * 30);
+  }
+  if (isWeekendPeak && busRatio > 0.10) {
+    outerSpeedPenalty += 3.5;
+  }
+  
+  // 套用阻抗到 lane2State 
+  if (outerSpeedPenalty > 0 && !isLane2AllZero) {
+    lane2State.equivalentTravelSpeedKmh = Math.max(MIN_PHYSICAL_CRAWL_SPEED_KMH, lane2State.equivalentTravelSpeedKmh - outerSpeedPenalty);
+    lane2State.spaceMeanSpeedKmh = Math.max(MIN_PHYSICAL_CRAWL_SPEED_KMH, lane2State.spaceMeanSpeedKmh - outerSpeedPenalty);
+    lane2State.detectorArithmeticMeanSpeedKmh = Math.max(MIN_PHYSICAL_CRAWL_SPEED_KMH, lane2State.detectorArithmeticMeanSpeedKmh - outerSpeedPenalty);
+    
+    // 重新計算 Travel Time (因為流速降低，時間變長)
+    lane2State.travelTimeSec = (tunnelLengthKm / lane2State.equivalentTravelSpeedKmh) * 3600;
+    lane2State.travelTimeFormatted = formatSecondsToMinSec(lane2State.travelTimeSec);
   }
 
   const diffSec = Math.abs(lane1State.travelTimeSec - lane2State.travelTimeSec);
