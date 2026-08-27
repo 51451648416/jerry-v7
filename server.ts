@@ -224,7 +224,7 @@ async function performCloudCctvVisionAnalysis(
 }`;
 
       const response = await ai.models.generateContent({
-        model: "gemini-3.7-flash",
+        model: "gemini-2.5-flash",
         contents: [
           {
             inlineData: {
@@ -257,7 +257,7 @@ async function performCloudCctvVisionAnalysis(
         mileageKm: cameraInfo.mileage,
         direction,
         analyzedAt: new Date().toISOString(),
-        modelName: "gemini-3.7-flash",
+        modelName: "gemini-2.5-flash",
       };
     } catch (aiErr) {
       console.warn(`Gemini 視覺模型辨識時發生例外 (${direction}向)，切換至空間幾何安全備援:`, aiErr);
@@ -275,7 +275,7 @@ async function performCloudCctvVisionAnalysis(
     mileageKm: cameraInfo.mileage,
     direction,
     analyzedAt: new Date().toISOString(),
-    modelName: ai ? "gemini-3.7-flash-heuristic" : "cloud-vision-standby",
+    modelName: ai ? "gemini-2.5-flash-heuristic" : "cloud-vision-standby",
   };
 }
 
@@ -418,10 +418,14 @@ export async function getLatestCctvCrossValidation(
 
   if (redis) {
     try {
-      await redis.set(redisKey, {
-        cctvResult,
-        cachedAt: now,
-      });
+      await redis.set(
+        redisKey,
+        {
+          cctvResult,
+          cachedAt: now,
+        },
+        { ex: 240 }
+      );
     } catch {}
   }
 
