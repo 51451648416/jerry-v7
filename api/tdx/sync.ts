@@ -259,10 +259,10 @@ export default async function handler(req: any, res: any) {
       status: "OK",
     };
 
-    // 3. 寫入 Redis Key hsuehshan:tdx:traffic_realtime (TTL: 180 秒，支援 90 秒排程容錯)
+    // 3. 寫入 Redis Key hsuehshan:tdx:traffic_realtime (TTL: 90 秒)
     if (redis) {
       try {
-        await redis.set("hsuehshan:tdx:traffic_realtime", JSON.stringify(payload), { ex: 180 });
+        await redis.set("hsuehshan:tdx:traffic_realtime", JSON.stringify(payload), { ex: 90 });
         // 更新下一組金鑰輪替索引
         const nextIndex = (currentKeyIndex + 1) % keyPool.length;
         await redis.set("hsuehshan:tdx:key_index", nextIndex, { ex: 86400 });
@@ -275,7 +275,7 @@ export default async function handler(req: any, res: any) {
       success: true,
       message: "TDX 國道 5 號交通數據已成功同步至 Redis 快取池",
       key: "hsuehshan:tdx:traffic_realtime",
-      ttl: 180,
+      ttl: 90,
       syncedAt: new Date(now).toISOString(),
       keyUsed,
       recordsCount: Array.isArray(vdData) ? vdData.length : (vdData?.VDLives?.length || 0),
