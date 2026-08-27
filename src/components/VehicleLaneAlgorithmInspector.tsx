@@ -40,6 +40,16 @@ export default function VehicleLaneAlgorithmInspector({
   const [loading, setLoading] = useState(false);
   const [cctvAnalyzing, setCctvAnalyzing] = useState(false);
   const [lastFetched, setLastFetched] = useState<string>("");
+  const [cooldownSec, setCooldownSec] = useState<number>(0);
+
+  // 冷卻時間倒數計時器
+  useEffect(() => {
+    if (cooldownSec <= 0) return;
+    const timer = setInterval(() => {
+      setCooldownSec((prev) => (prev > 1 ? prev - 1 : 0));
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [cooldownSec]);
 
   const fetchAlgorithmLiveState = async () => {
     setLoading(true);
@@ -60,7 +70,23 @@ export default function VehicleLaneAlgorithmInspector({
     }
   };
 
+  const fetchCctvStatus = async () => {
+    try {
+      const res = await fetch(`/api/cctv/cross-validation?direction=${currentDirection}`);
+      const json = await res.json();
+      if (json && json.success) {
+        setCctvData(json);
+        if (json.cooldownRemainingSec && json.cooldownRemainingSec > 0) {
+          setCooldownSec(json.cooldownRemainingSec);
+        }
+      }
+    } catch (err) {
+      console.error("Failed to fetch CCTV status:", err);
+    }
+  };
+
   const triggerCctvReanalysis = async () => {
+    if (cooldownSec > 0 || cctvAnalyzing) return;
     setCctvAnalyzing(true);
     try {
       const res = await fetch("/api/cctv/cross-validation/analyze", {
@@ -71,7 +97,12 @@ export default function VehicleLaneAlgorithmInspector({
       const json = await res.json();
       if (json && json.success) {
         setCctvData(json);
+        setCooldownSec(json.cooldownRemainingSec || 190);
         fetchAlgorithmLiveState();
+      } else if (json && json.cooldownActive) {
+        if (json.cooldownRemainingSec) {
+          setCooldownSec(json.cooldownRemainingSec);
+        }
       }
     } catch (err) {
       console.error("Failed to trigger CCTV re-analysis:", err);
@@ -82,7 +113,11 @@ export default function VehicleLaneAlgorithmInspector({
 
   useEffect(() => {
     fetchAlgorithmLiveState();
-    const interval = setInterval(fetchAlgorithmLiveState, 60000);
+    fetchCctvStatus();
+    const interval = setInterval(() => {
+      fetchAlgorithmLiveState();
+      fetchCctvStatus();
+    }, 60000);
     return () => clearInterval(interval);
   }, [currentDirection]);
 
@@ -228,11 +263,21 @@ export default function VehicleLaneAlgorithmInspector({
             <button
               id="btn-reanalyze-cctv-vision"
               onClick={triggerCctvReanalysis}
-              disabled={cctvAnalyzing}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold bg-indigo-600 hover:bg-indigo-500 active:bg-indigo-700 text-white shadow-sm transition-colors"
+              disabled={cctvAnalyzing || cooldownSec > 0}
+              className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold shadow-sm transition-colors ${
+                cooldownSec > 0
+                  ? "bg-slate-800 text-slate-400 border border-slate-700 cursor-not-allowed"
+                  : "bg-indigo-600 hover:bg-indigo-500 active:bg-indigo-700 text-white"
+              }`}
             >
               <RefreshCw className={`h-3.5 w-3.5 ${cctvAnalyzing ? "animate-spin" : ""}`} />
-              <span>{cctvAnalyzing ? "雲端辨識中..." : `重新辨識 (${isSouth ? "南向18K" : "北向26K"})`}</span>
+              <span>
+                {cctvAnalyzing
+                  ? "雲端辨識中..."
+                  : cooldownSec > 0
+                  ? `冷卻中 (${cooldownSec}s)`
+                  : `重新辨識 (${isSouth ? "南向18K" : "北向26K"})`}
+              </span>
             </button>
           </div>
         </div>

@@ -113,6 +113,11 @@ export const DIRECTION_CCTV_CONFIGS = {
 
 // 雲端 CCTV 影像分析長效快取 (TTL: 240 秒 = 4 分鐘，南北向獨立快取)
 const CCTV_VISION_CACHE_TTL_MS = 240 * 1000;
+const CCTV_MANUAL_COOLDOWN_MS = 190 * 1000; // 190 秒冷卻時間
+let lastManualAnalysisTimestamp: Record<"N" | "S", number> = {
+  N: 0,
+  S: 0,
+};
 let globalCctvCrossValidationCache: Record<
   "N" | "S",
   {
@@ -1144,6 +1149,11 @@ async function startServer() {
       const config = DIRECTION_CCTV_CONFIGS[direction];
       const dirRec = globalLatestLaneRecommendation[direction];
 
+      const now = Date.now();
+      const lastTime = lastManualAnalysisTimestamp[direction] || 0;
+      const elapsed = now - lastTime;
+      const cooldownRemainingSec = elapsed < CCTV_MANUAL_COOLDOWN_MS ? Math.ceil((CCTV_MANUAL_COOLDOWN_MS - elapsed) / 1000) : 0;
+
       const state = await getLatestCctvCrossValidation(
         {
           vdStationId: config.defaultVdStationId,
@@ -1154,7 +1164,7 @@ async function startServer() {
         req.query.refresh === "true",
         direction
       );
-      return res.json({ success: true, direction, ...state });
+      return res.json({ success: true, direction, cooldownRemainingSec, ...state });
     } catch (err: any) {
       return res.status(500).json({ success: false, error: err.message });
     }
@@ -1164,6 +1174,44 @@ async function startServer() {
     try {
       const direction: "N" | "S" =
         String(req.body?.direction || req.query.direction || "N").toUpperCase() === "S" ? "S" : "N";
+      
+      const now = Date.now();
+      const lastTime = lastManualAnalysisTimestamp[direction] || 0;
+      const elapsed = now - lastTime;
+
+      if (elapsed < CCTV_MANUAL_COOLDOWN_MS) {
+        const remainingSec = Math.ceil((CCTV_MANUAL_COOLDOWN_MS - elapsed) / 1000);
+        const cachedSlot = globalCctvCrossValidationCache[direction];
+        const dirRec = globalLatestLaneRecommendation[direction];
+        const config = DIRECTION_CCTV_CONFIGS[direction];
+
+        let state = cachedSlot?.state;
+        if (!state) {
+          state = await getLatestCctvCrossValidation(
+            {
+              vdStationId: config.defaultVdStationId,
+              mileageKm: config.mileage,
+              innerSpeedKmh: dirRec?.innerLane?.speedKmh || (direction === "S" ? 76.0 : 75.0),
+              outerSpeedKmh: dirRec?.outerLane?.speedKmh || (direction === "S" ? 74.0 : 72.0),
+            },
+            false,
+            direction
+          );
+        }
+
+        return res.json({
+          success: false,
+          cooldownActive: true,
+          cooldownRemainingSec: remainingSec,
+          message: `重新辨識冷卻中，請於 ${remainingSec} 秒後再試（冷卻時間 190 秒）`,
+          direction,
+          ...state,
+        });
+      }
+
+      // 紀錄本次手動重新辨識時間
+      lastManualAnalysisTimestamp[direction] = now;
+
       const config = DIRECTION_CCTV_CONFIGS[direction];
       const dirRec = globalLatestLaneRecommendation[direction];
 
@@ -1177,7 +1225,7 @@ async function startServer() {
         true, // 強制立即重新抓圖與視覺分析
         direction
       );
-      return res.json({ success: true, direction, ...state });
+      return res.json({ success: true, direction, cooldownRemainingSec: 190, ...state });
     } catch (err: any) {
       return res.status(500).json({ success: false, error: err.message });
     }
