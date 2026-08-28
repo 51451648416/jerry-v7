@@ -33,15 +33,22 @@ export default async function handler(req: any, res: any) {
   try {
     const redis = new Redis({ url: redisUrl, token: redisToken });
 
-    // 批量並行讀取 Key 清單（共 10 個 Key）
+    // 批量讀取：TDX 即時交通快取 + 8 支攝影機快取 + 下一鏡頭索引
     const keysToFetch = [
       "hsuehshan:tdx:traffic_realtime",
       "hsuehshan:cctv:next_cam_index",
       ...CAMERA_IDS.map((id) => `hsuehshan:cctv:cam:${id}`),
     ];
 
-    // 🟢 使用單次 mget 批量讀取：Redis 命令消耗從 10 次降為 1 次
-    const results = (await redis.mget<any[]>(...keysToFetch)) || [];
+    const results = await Promise.all(
+      keysToFetch.map(async (key) => {
+        try {
+          return await redis.get(key);
+        } catch (e) {
+          return null;
+        }
+      })
+    );
 
     const trafficRaw = results[0];
     const nextCamIndex = results[1] ?? 0;
