@@ -33,7 +33,7 @@ export default async function handler(req: any, res: any) {
   try {
     const redis = new Redis({ url: redisUrl, token: redisToken });
 
-    // 批量讀取：TDX 即時交通快取 + 8 支攝影機快取 + 下一鏡頭索引
+    // 批量並行讀取：TDX 即時交通快取 + 8 支攝影機快取 + 下一鏡頭索引
     const keysToFetch = [
       "hsuehshan:tdx:traffic_realtime",
       "hsuehshan:cctv:next_cam_index",
