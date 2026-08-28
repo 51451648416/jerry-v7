@@ -143,6 +143,9 @@ export default function TunnelCrossSectionView({
                   ? "建議行駛【👈 內側車道 (左)】"
                   : "建議行駛【外側車道 (右) 👉】"}
               </h2>
+              <span className="inline-block text-[11px] font-mono text-emerald-400 bg-emerald-950/60 border border-emerald-500/30 px-2 py-0.5 rounded-md">
+                基於 20 微元動態流速積分推估
+              </span>
             </div>
             <div className="text-xs sm:text-sm text-slate-300 flex flex-wrap items-center gap-x-3 gap-y-1.5 pt-0.5">
               <span className="flex items-center gap-1.5">

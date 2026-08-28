@@ -209,8 +209,8 @@ export default function CorridorMonitor({
             <div className="text-xl sm:text-2xl font-black text-slate-800 mt-1">
               {totalTravelTimeFormatted}
             </div>
-            <span className="text-[10px] text-slate-400 font-sans block mt-0.5">
-              總長 {totalKm} 公里
+            <span className="text-[10px] text-emerald-700 font-medium font-sans block mt-0.5">
+              基於 20 微元動態流速積分推估 ({totalKm} km)
             </span>
           </div>
 

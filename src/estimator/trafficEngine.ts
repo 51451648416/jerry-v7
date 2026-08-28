@@ -413,90 +413,89 @@ function extractVehicleTypesFromRaw(rawApiPayload: any, direction: string) {
     
     if (!isInEntranceBounds && mileageKm > 0) continue;
     
-    function parseLaneVehicles(lane: any) {
-      let volume = 0;
-      let small = 0;
-      let large = 0;
-      let truck = 0;
-      let speed = typeof lane.Speed === "number" && lane.Speed > 0 ? lane.Speed : 0;
+    const linkFlows = Array.isArray(item.LinkFlows) ? item.LinkFlows : [];
+    const lanes: any[] = [];
 
-      if (Array.isArray(lane.Vehicles) && lane.Vehicles.length > 0) {
+    if (linkFlows.length > 0) {
+      for (const lf of linkFlows) {
+        if (Array.isArray(lf?.Lanes)) {
+          lanes.push(...lf.Lanes);
+        }
+      }
+    } else if (Array.isArray(item.Lanes)) {
+      lanes.push(...item.Lanes);
+    } else if (Array.isArray(item.lanes)) {
+      lanes.push(...item.lanes);
+    }
+
+    lanes.forEach((laneObj: any, lIdx: number) => {
+      let isInner = false;
+      if (laneObj.LaneID !== undefined && laneObj.LaneID !== null) {
+        const numId = Number(laneObj.LaneID);
+        isInner = numId === 1 || numId === 0;
+      } else {
+        isInner = lIdx === 0;
+      }
+
+      let laneSpeed = typeof laneObj.Speed === "number" && laneObj.Speed > 0 ? laneObj.Speed : 0;
+      let vS = 0, vL = 0, vT = 0;
+
+      if (Array.isArray(laneObj.Vehicles) && laneObj.Vehicles.length > 0) {
         let weightedSpeedSum = 0;
         let totalVeh = 0;
-        for (const v of lane.Vehicles) {
+
+        laneObj.Vehicles.forEach((v: any) => {
           const vol = typeof v.Volume === "number" ? v.Volume : 0;
           const spd = typeof v.Speed === "number" && v.Speed > 0 ? v.Speed : 0;
           const vType = String(v.VehicleType || "").trim().toUpperCase();
 
-          volume += vol;
           if (vType === "S" || vType === "SMALL" || vType === "1" || vType === "CAR") {
-            small += vol;
+            vS += vol;
+            if (vol > 0 && spd > 0) {
+              smallSpeedSum += vol * spd;
+              smallSpeedCount += vol;
+            }
           } else if (vType === "L" || vType === "LARGE" || vType === "2" || vType === "BUS") {
-            large += vol;
+            vL += vol;
+            if (vol > 0 && spd > 0) {
+              largeSpeedSum += vol * spd;
+              largeSpeedCount += vol;
+            }
           } else if (vType === "T" || vType === "TRUCK" || vType === "3" || vType === "TRAILER" || vType === "TT") {
-            truck += vol;
+            vT += vol;
           } else {
-            small += vol;
+            vS += vol;
+            if (vol > 0 && spd > 0) {
+              smallSpeedSum += vol * spd;
+              smallSpeedCount += vol;
+            }
           }
 
           if (vol > 0 && spd > 0) {
             weightedSpeedSum += vol * spd;
             totalVeh += vol;
           }
+        });
+
+        if (laneSpeed <= 0 && totalVeh > 0) {
+          laneSpeed = Math.round(weightedSpeedSum / totalVeh);
         }
-        if (speed <= 0 && totalVeh > 0) {
-          speed = Math.round(weightedSpeedSum / totalVeh);
-        }
-      } else if (typeof lane.Volume === "number") {
-        volume = lane.Volume;
-        small = lane.Volume;
+      } else if (typeof laneObj.Volume === "number") {
+        vS = laneObj.Volume;
       }
 
-      return { volume, small, large, truck, speed };
-    }
-
-    const linkFlows = Array.isArray(item.LinkFlows) ? item.LinkFlows : [];
-    const lanes = linkFlows[0]?.Lanes || item.Lanes || item.lanes || [];
-
-    let innerData = { volume: 0, small: 0, large: 0, truck: 0, speed: 0 };
-    let outerData = { volume: 0, small: 0, large: 0, truck: 0, speed: 0 };
-
-    if (lanes.length >= 2) {
-      const l0 = parseLaneVehicles(lanes[0]);
-      const l1 = parseLaneVehicles(lanes[1]);
-      innerData = { volume: l0.volume, small: l0.small, large: l0.large, truck: l0.truck, speed: l0.speed || (direction === "S" ? 76 : 75) };
-      outerData = { volume: l1.volume, small: l1.small, large: l1.large, truck: l1.truck, speed: l1.speed || (direction === "S" ? 74 : 72) };
-    } else if (lanes.length === 1) {
-      const tLane = parseLaneVehicles(lanes[0]);
-      const baseSpd = tLane.speed > 0 ? tLane.speed : (direction === "S" ? 75 : 74);
-      innerData = {
-        volume: Math.round(tLane.volume * 0.52),
-        small: Math.round(tLane.small * 0.52),
-        large: Math.round(tLane.large * 0.5),
-        truck: Math.round(tLane.truck * 0.4),
-        speed: baseSpd + 1
-      };
-      outerData = {
-        volume: tLane.volume - innerData.volume,
-        small: tLane.small - innerData.small,
-        large: tLane.large - innerData.large,
-        truck: tLane.truck - innerData.truck,
-        speed: Math.max(40, baseSpd - 2)
-      };
-    } else {
-      innerData = { volume: 85, small: 80, large: 4, truck: 1, speed: direction === "S" ? 76 : 75 };
-      outerData = { volume: 78, small: 65, large: 10, truck: 3, speed: direction === "S" ? 74 : 72 };
-    }
-
-    innerVolS += innerData.small;
-    innerVolL += innerData.large;
-    innerVolT += innerData.truck;
-    if (innerData.speed > 0) innerSpeeds.push(innerData.speed);
-
-    outerVolS += outerData.small;
-    outerVolL += outerData.large;
-    outerVolT += outerData.truck;
-    if (outerData.speed > 0) outerSpeeds.push(outerData.speed);
+      if (isInner) {
+        if (laneSpeed > 0) innerSpeeds.push(laneSpeed);
+        innerVolS += vS;
+        innerVolL += vL;
+        innerVolT += vT;
+      } else {
+        if (laneSpeed > 0) outerSpeeds.push(laneSpeed);
+        outerVolS += vS;
+        outerVolL += vL;
+        outerVolT += vT;
+      }
+    });
   }
 
   const avgInnerSpeed = innerSpeeds.length > 0 ? Math.round((innerSpeeds.reduce((a, b) => a + b, 0) / innerSpeeds.length) * 10) / 10 : (direction === "S" ? 76 : 75);
@@ -1177,7 +1176,8 @@ export function runVdTrafficEstimator(
   const corridorState = estimateCorridorTrafficState(
     corridorDetectors,
     direction,
-    estimated_state.equivalentTravelSpeedKmh
+    estimated_state.equivalentTravelSpeedKmh,
+    estimated_state.travelTimeSec
   );
   const defaultDestKm = direction === "S" ? 46.0 : 0.0;
   const defaultOriginKm = direction === "S" ? 0.0 : 46.0;

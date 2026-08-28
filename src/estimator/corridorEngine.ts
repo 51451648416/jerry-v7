@@ -32,7 +32,8 @@ import { computeHarmonizedDepartureTimeSlots } from "./harmonizedDepartureEngine
 export function estimateCorridorTrafficState(
   allDetectors: RawApiDetectorRecord[],
   direction: Direction,
-  tunnelEquivalentSpeedKmh: number = 80
+  tunnelEquivalentSpeedKmh: number = 80,
+  tunnelTravelTimeSec?: number
 ): CorridorEstimatedState {
   const baseConfigs: BaseCorridorSegmentConfig[] =
     direction === "S" ? FREEWAY_5_CORRIDOR_SEGMENTS_SOUTH : FREEWAY_5_CORRIDOR_SEGMENTS_NORTH;
@@ -52,9 +53,18 @@ export function estimateCorridorTrafficState(
     );
 
     let avgSpeed = 80;
+    let isTunnelIntegralCalculated = false;
+    let travelSec = 0;
+
     if (cfg.isTunnelSection && cfg.name.includes("雪山隧道")) {
-      // 若是雪山隧道核心段，優先採用微元積分高精度等效速度
-      avgSpeed = tunnelEquivalentSpeedKmh > 0 ? tunnelEquivalentSpeedKmh : 80;
+      // 若是雪山隧道核心段，直接綁定 20 微元動態流速積分模型輸出之總旅行時間 (sum(segment_time))
+      if (tunnelTravelTimeSec != null && tunnelTravelTimeSec > 0) {
+        travelSec = tunnelTravelTimeSec;
+        avgSpeed = (cfg.lengthKm / (travelSec / 3600));
+        isTunnelIntegralCalculated = true;
+      } else {
+        avgSpeed = tunnelEquivalentSpeedKmh > 0 ? tunnelEquivalentSpeedKmh : 80;
+      }
     } else if (matchingDetectors.length > 0) {
       // 檢測該路段所有偵測器是否整列全為 0 (封閉管制)
       const isSegmentAllZero = matchingDetectors.every((d) =>
@@ -93,8 +103,10 @@ export function estimateCorridorTrafficState(
 
     avgSpeed = Math.max(MIN_PHYSICAL_CRAWL_SPEED_KMH, Math.min(110, avgSpeed));
 
-    // 旅行時間 (秒) = (里程 / 速度) * 3600
-    const travelSec = (cfg.lengthKm / avgSpeed) * 3600;
+    // 旅行時間 (秒)：雪隧段直接採用 20 微元積分時間，其餘段為 (里程 / 調和速度) * 3600
+    if (!isTunnelIntegralCalculated) {
+      travelSec = (cfg.lengthKm / avgSpeed) * 3600;
+    }
     totalTravelTimeSec += travelSec;
     totalDistanceKm += cfg.lengthKm;
 
