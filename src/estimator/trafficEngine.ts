@@ -12,6 +12,8 @@ import {
   DelayAwareSegmentResult,
   DoubleVerificationState,
   VehicleBreakdown,
+  LaneDiagnosisResult,
+  LaneDiagnosisStatus,
 } from "../types";
 import { parseRawTdxVdPayload } from "./apiParser";
 import { validateDetectorData } from "./dataValidation";
@@ -92,6 +94,250 @@ export function checkIsLateNightHours(
     hour,
     minute,
     timeLabel,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// 雙車道高階車流流體力學與烏龜車/速差即時診斷模型 (Traffic Fluid Dynamics & Lane Diagnosis)
+// ---------------------------------------------------------------------------
+
+/**
+ * 計算全線加權平均宏觀時速 macro_V = sum(V_i * Q_i) / sum(Q_i)
+ */
+export function calculateMacroSpeedKmh(stations: { speedKmh: number; flowVehPerHour: number }[]): number {
+  let sumVQ = 0;
+  let sumQ = 0;
+  for (const st of stations) {
+    const q = Math.max(0, st.flowVehPerHour || 0);
+    const v = Math.max(0, st.speedKmh || 0);
+    if (q > 0 && v > 0) {
+      sumVQ += v * q;
+      sumQ += q;
+    }
+  }
+  return sumQ > 0 ? sumVQ / sumQ : 80.0;
+}
+
+/**
+ * 雙車道即時診斷函式：diagnoseLaneStatus
+ * 依據高階車流流體力學與實測 VD 數據自動辨識烏龜車、速差壓制與車道封閉
+ */
+export function diagnoseLaneStatus(
+  vd: RawApiDetectorRecord | {
+    detectorId?: string;
+    vdId?: string;
+    mileageKm: number;
+    lanes?: { speedKmh: number; flowVehPerHour?: number; occupancyPercent?: number }[];
+    innerSpeed?: number;
+    outerSpeed?: number;
+    innerFlow?: number;
+    outerFlow?: number;
+    innerOcc?: number;
+    outerOcc?: number;
+    [key: string]: any;
+  },
+  prevVd?: any,
+  macroSpeedKmh: number = 80.0
+): LaneDiagnosisResult {
+  const vdId = (vd as any).detectorId || (vd as any).vdId || `VD-${(vd as any).mileageKm?.toFixed(1) || "0"}`;
+  const mileageKm = typeof (vd as any).mileageKm === "number" ? (vd as any).mileageKm : 18.0;
+
+  // 提取車道 1 (內側) 與車道 2 (外側) 數據
+  const v1 = (vd as any).innerSpeed ?? (vd as any).lanes?.[0]?.speedKmh ?? 0;
+  const v2 = (vd as any).outerSpeed ?? (vd as any).lanes?.[1]?.speedKmh ?? 0;
+  const flow1 = (vd as any).innerFlow ?? (vd as any).lanes?.[0]?.flowVehPerHour ?? 0;
+  const flow2 = (vd as any).outerFlow ?? (vd as any).lanes?.[1]?.flowVehPerHour ?? 0;
+  const occ1 = (vd as any).innerOcc ?? (vd as any).lanes?.[0]?.occupancyPercent ?? 0;
+  const occ2 = (vd as any).outerOcc ?? (vd as any).lanes?.[1]?.occupancyPercent ?? 0;
+
+  // 1. 車道封閉檢測 (全線/單線 0 km/h 且 0 流量)
+  if (v1 === 0 && flow1 === 0 && v2 === 0 && flow2 === 0) {
+    return {
+      vdId,
+      mileageKm,
+      innerSpeedKmh: 0,
+      outerSpeedKmh: 0,
+      innerFlowVehPerHour: 0,
+      outerFlowVehPerHour: 0,
+      speedDeltaKmh: 0,
+      status: "ALL_CLOSED",
+      statusLabel: "⛔ 全線雙車道封閉",
+      description: "雙車道流速流量皆為 0，已判定為全線封閉管制",
+      recommendedLane: null,
+      recommendedLaneId: null,
+      recommendedLaneTag: "全線封閉",
+      isClosed: true,
+      triggeredThresholdLabel: "流速流量為0 (全線封閉)",
+    };
+  }
+
+  if (v1 === 0 && flow1 === 0 && (v2 > 0 || flow2 > 0)) {
+    return {
+      vdId,
+      mileageKm,
+      innerSpeedKmh: 0,
+      outerSpeedKmh: v2,
+      innerFlowVehPerHour: 0,
+      outerFlowVehPerHour: flow2,
+      speedDeltaKmh: v2,
+      status: "LANE1_CLOSED",
+      statusLabel: "⛔ 內側車道封閉",
+      description: "內側車道流速流量皆為 0，唯一開放外側車道",
+      recommendedLane: "外側車道",
+      recommendedLaneId: 2,
+      recommendedLaneTag: "推薦走外側",
+      isClosed: true,
+      closedLaneId: 1,
+      triggeredThresholdLabel: "內側流量流速為0 (內側封閉)",
+    };
+  }
+
+  if (v2 === 0 && flow2 === 0 && (v1 > 0 || flow1 > 0)) {
+    return {
+      vdId,
+      mileageKm,
+      innerSpeedKmh: v1,
+      outerSpeedKmh: 0,
+      innerFlowVehPerHour: flow1,
+      outerFlowVehPerHour: 0,
+      speedDeltaKmh: v1,
+      status: "LANE2_CLOSED",
+      statusLabel: "⛔ 外側車道封閉",
+      description: "外側車道流速流量皆為 0，唯一開放內側車道",
+      recommendedLane: "內側車道",
+      recommendedLaneId: 1,
+      recommendedLaneTag: "推薦走內側",
+      isClosed: true,
+      closedLaneId: 2,
+      triggeredThresholdLabel: "外側流量流速為0 (外側封閉)",
+    };
+  }
+
+  const speedDelta = v1 - v2; // 正值代表內側快，負值代表外側快
+
+  // 2. 烏龜車核心規則一：內側烏龜車道 (ΔV = v2 - v1 >= 10 km/h，如 19K~21K 案例)
+  if (v2 - v1 >= 10.0 && v1 > 0 && v2 > 0) {
+    return {
+      vdId,
+      mileageKm,
+      innerSpeedKmh: v1,
+      outerSpeedKmh: v2,
+      innerFlowVehPerHour: flow1,
+      outerFlowVehPerHour: flow2,
+      speedDeltaKmh: v2 - v1,
+      status: "INNER_TURTLE_LANE",
+      statusLabel: "🐢 內側烏龜車道",
+      description: `內側時速 ${v1.toFixed(0)} km/h 明顯慢於外側 ${v2.toFixed(0)} km/h (速差達 ${(v2 - v1).toFixed(1)} km/h)，出現內側路隊長壓制`,
+      recommendedLane: "外側車道",
+      recommendedLaneId: 2,
+      recommendedLaneTag: "推薦走外側",
+      isClosed: false,
+      turtleLaneId: 1,
+      suppressedSpeedKmh: v1,
+      normalSpeedKmh: v2,
+      triggeredThresholdLabel: `ΔV ≥ 10 km/h (內側烏龜, 速差 ${(v2 - v1).toFixed(1)} km/h)`,
+    };
+  }
+
+  // 3. 烏龜車核心規則二：外側慢速/大車壓制 (ΔV = v1 - v2 >= 6 km/h，如 16.1K 案例)
+  if (v1 - v2 >= 6.0 && v1 > 0 && v2 > 0) {
+    return {
+      vdId,
+      mileageKm,
+      innerSpeedKmh: v1,
+      outerSpeedKmh: v2,
+      innerFlowVehPerHour: flow1,
+      outerFlowVehPerHour: flow2,
+      speedDeltaKmh: v1 - v2,
+      status: "OUTER_SLOW_HEAVY_SUPPRESSION",
+      statusLabel: "⚠️ 外側慢速/大車壓制",
+      description: `外側時速 ${v2.toFixed(0)} km/h 慢於內側 ${v1.toFixed(0)} km/h (速差達 ${(v1 - v2).toFixed(1)} km/h)，受慢速車或大車爬坡壓制`,
+      recommendedLane: "內側車道",
+      recommendedLaneId: 1,
+      recommendedLaneTag: "推薦走內側",
+      isClosed: false,
+      turtleLaneId: 2,
+      suppressedSpeedKmh: v2,
+      normalSpeedKmh: v1,
+      triggeredThresholdLabel: `ΔV ≥ 6 km/h (外側壓制, 速差 ${(v1 - v2).toFixed(1)} km/h)`,
+    };
+  }
+
+  // 4. 高階車流流體力學極致超敏偵測模型 (Traffic Fluid Dynamics Micro Model)
+  // 宏觀時速閘門：macro_V >= 75.0 km/h 時啟動微觀極致敏感運算
+  if (macroSpeedKmh >= 75.0 && v1 > 0 && v2 > 0) {
+    // (1) 車流密度 Density K (輛/公里)
+    const K1 = flow1 / (v1 || 1);
+    const K2 = flow2 / (v2 || 1);
+
+    // (2) 空間速度梯度 Spatial Speed Gradient ∇V2
+    let grad_V2 = 0;
+    if (prevVd) {
+      const prevV2 = (prevVd as any).outerSpeed ?? (prevVd as any).lanes?.[1]?.speedKmh ?? v2;
+      const prevMileage = typeof (prevVd as any).mileageKm === "number" ? (prevVd as any).mileageKm : mileageKm;
+      const delta_x = Math.max(0.2, Math.abs(mileageKm - prevMileage));
+      grad_V2 = (prevV2 - v2) / delta_x; // 外側空間降速梯度 (km/h per km)
+    }
+
+    // (3) 佔有率密度比 / 車隊指標 Platoon Index PI
+    const PI_2 = occ2 / (K2 || 1);
+    const PI_1 = occ1 / (K1 || 1);
+
+    // 極致超敏感判定矩陣 (Trigger Conditions A, B, C, D)
+    const condA_Shockwave = grad_V2 >= 12.0; // 空間震波：每公里時速驟降 12 km/h 以上
+    const condB_DensityInversion = (v1 - v2) >= 2.5 && K2 > K1 * 1.15; // 微小速差與密度反轉
+    const condC_PlatoonCompression = v2 < 82.0 && PI_2 > PI_1 * 1.25 && occ2 > 4.0; // 車隊壓縮
+    const condD_AbsoluteFloor = v2 < 73.0 && flow2 > 0; // 絕對防線 (時速 < 73 km/h 且非封閉)
+
+    if (condA_Shockwave || condB_DensityInversion || condC_PlatoonCompression || condD_AbsoluteFloor) {
+      const triggerReasons: string[] = [];
+      if (condA_Shockwave) triggerReasons.push(`空間震波 ∇V2=${grad_V2.toFixed(1)}`);
+      if (condB_DensityInversion) triggerReasons.push(`密度反轉 K2/K1=${(K2 / (K1 || 1)).toFixed(2)}`);
+      if (condC_PlatoonCompression) triggerReasons.push(`車隊壓縮 PI2=${PI_2.toFixed(1)}`);
+      if (condD_AbsoluteFloor) triggerReasons.push(`時速跌破73km/h (${v2.toFixed(0)})`);
+
+      const diagTag = `⚠️ 外側微觀受阻 [∇V: ${grad_V2.toFixed(1)}, K2: ${K2.toFixed(1)}, ΔV: ${(v1 - v2).toFixed(1)}] - 推薦行駛內側`;
+
+      return {
+        vdId,
+        mileageKm,
+        innerSpeedKmh: v1,
+        outerSpeedKmh: v2,
+        innerFlowVehPerHour: flow1,
+        outerFlowVehPerHour: flow2,
+        speedDeltaKmh: v1 - v2,
+        status: "OUTER_SLOW_HEAVY_SUPPRESSION",
+        statusLabel: "⚠️ 外側微觀受阻",
+        description: `高階流體力學超敏偵測到外側微觀受阻 (${triggerReasons.join(" | ")})，建議提早偏向內側車道順行`,
+        recommendedLane: "內側車道",
+        recommendedLaneId: 1,
+        recommendedLaneTag: "推薦走內側",
+        isClosed: false,
+        turtleLaneId: 2,
+        suppressedSpeedKmh: v2,
+        normalSpeedKmh: v1,
+        triggeredThresholdLabel: diagTag,
+      };
+    }
+  }
+
+  // 5. 雙車道流速均衡 (Normal Balanced)
+  return {
+    vdId,
+    mileageKm,
+    innerSpeedKmh: v1,
+    outerSpeedKmh: v2,
+    innerFlowVehPerHour: flow1,
+    outerFlowVehPerHour: flow2,
+    speedDeltaKmh: Math.abs(speedDelta),
+    status: "NORMAL_BALANCED",
+    statusLabel: "雙車道流速均衡",
+    description: `雙車道流速平衡 (內側 ${v1.toFixed(0)} km/h / 外側 ${v2.toFixed(0)} km/h，速差僅 ${Math.abs(speedDelta).toFixed(1)} km/h)，兩側皆可順暢行駛`,
+    recommendedLane: "兩邊皆可",
+    recommendedLaneId: null,
+    recommendedLaneTag: "兩邊皆可",
+    isClosed: false,
+    triggeredThresholdLabel: "流速均衡 (ΔV < 2.5 km/h)",
   };
 }
 
@@ -373,143 +619,149 @@ function isWeekendPeakTime(date: Date = new Date()): boolean {
   }
 }
 
+// 輔助函式 resolveLaneIdentifier: 依據車道序號/LaneID/LaneNo與描述嚴格正確分流 (1: 內側/快車道, 2: 外側/慢車道)
+export const resolveLaneIdentifier = (
+  laneObj: any,
+  defaultIndex: number = 0,
+  totalLanes: number = 2
+): 1 | 2 => {
+  if (!laneObj) return defaultIndex === 0 ? 1 : 2;
+
+  // 1. 車道文字描述識別
+  const desc = String(
+    laneObj.LaneType ||
+    laneObj.LaneDesc ||
+    laneObj.LaneName ||
+    laneObj.Description ||
+    laneObj.laneType ||
+    laneObj.laneDesc ||
+    laneObj.laneName ||
+    ""
+  );
+  if (/內|快|inner|fast/i.test(desc)) return 1;
+  if (/外|慢|outer|slow/i.test(desc)) return 2;
+
+  // 2. 容錯處理：提取 LaneID / LaneNo 並以 Number 型別轉換比對
+  const rawLaneVal =
+    laneObj.LaneID ??
+    laneObj.LaneNo ??
+    laneObj.LaneNumber ??
+    laneObj.laneId ??
+    laneObj.laneNo ??
+    laneObj.laneID;
+
+  if (rawLaneVal !== undefined && rawLaneVal !== null && rawLaneVal !== "") {
+    const rawStr = String(rawLaneVal).trim();
+    if (/內|快|inner|fast/i.test(rawStr)) return 1;
+    if (/外|慢|outer|slow/i.test(rawStr)) return 2;
+
+    const numId = Number(rawLaneVal);
+    if (!isNaN(numId)) {
+      // 0-indexed: Lane 0 為內側快車道
+      if (numId === 0) return 1;
+      // Lane 1: 若有多車道且為後續索引 (index >= 1)，代表 0-indexed 之第 2 車道 (外側慢車道)
+      if (numId === 1) {
+        if (defaultIndex >= 1 && totalLanes >= 2) return 2;
+        return 1;
+      }
+      // 1-indexed 之第 2 車道以上皆指派為外側
+      if (numId >= 2) return 2;
+    }
+  }
+
+  // 3. Fallback: 使用索引 (0: 內側, >=1: 外側)
+  return defaultIndex === 0 ? 1 : 2;
+};
+
+// 輔助函式 parseLaneVehicles: 提取車速並依 VehicleType 完整遍歷 Vehicles 陣列 (安全 Number 型別轉換)
+export const parseLaneVehicles = (lane: any) => {
+  if (!lane) return { volume: 0, small: 0, large: 0, truck: 0, speed: 0 };
+  let speed = Number(lane.Speed ?? lane.speed ?? 0) || 0;
+  let small = 0;
+  let large = 0;
+  let truck = 0;
+  let totalVeh = 0;
+  let weightedSpeedSum = 0;
+
+  const vehList = Array.isArray(lane.Vehicles)
+    ? lane.Vehicles
+    : Array.isArray(lane.vehicles)
+    ? lane.vehicles
+    : Array.isArray(lane.VehiclesFlow)
+    ? lane.VehiclesFlow
+    : null;
+
+  if (vehList && vehList.length > 0) {
+    vehList.forEach((v: any) => {
+      const vol = Number(v.Volume ?? v.volume ?? v.Flow ?? v.flow ?? v.VehiclesCount ?? v.Count ?? v.count ?? 0) || 0;
+      const spd = Number(v.Speed ?? v.speed ?? 0) || 0;
+      const vType = String(v.VehicleType ?? v.vehicleType ?? v.Type ?? v.type ?? "").trim().toUpperCase();
+
+      if (vType === "S" || vType === "SMALL" || vType === "1" || vType === "CAR") {
+        small += vol;
+        if (vol > 0 && spd > 0) {
+          smallSpeedSumTemp += vol * spd;
+          smallSpeedCountTemp += vol;
+        }
+      } else if (vType === "L" || vType === "LARGE" || vType === "2" || vType === "BUS") {
+        large += vol;
+        if (vol > 0 && spd > 0) {
+          largeSpeedSumTemp += vol * spd;
+          largeSpeedCountTemp += vol;
+        }
+      } else if (vType === "T" || vType === "TRUCK" || vType === "3" || vType === "TRAILER" || vType === "TT") {
+        truck += vol;
+      } else {
+        small += vol;
+        if (vol > 0 && spd > 0) {
+          smallSpeedSumTemp += vol * spd;
+          smallSpeedCountTemp += vol;
+        }
+      }
+
+      if (vol > 0 && spd > 0) {
+        weightedSpeedSum += vol * spd;
+      }
+      totalVeh += vol;
+    });
+
+    if (speed <= 0 && totalVeh > 0 && weightedSpeedSum > 0) {
+      speed = Math.round(weightedSpeedSum / totalVeh);
+    }
+  } else if (lane.Volume !== undefined && lane.Volume !== null) {
+    totalVeh = Number(lane.Volume) || 0;
+    small = totalVeh;
+  } else if (lane.volume !== undefined && lane.volume !== null) {
+    totalVeh = Number(lane.volume) || 0;
+    small = totalVeh;
+  } else if (lane.Flow !== undefined && lane.Flow !== null) {
+    totalVeh = Math.round((Number(lane.Flow) || 0) / 60);
+    small = totalVeh;
+  } else if (lane.flow !== undefined && lane.flow !== null) {
+    totalVeh = Math.round((Number(lane.flow) || 0) / 60);
+    small = totalVeh;
+  }
+
+  const volume = totalVeh > 0 ? totalVeh : (small + large + truck);
+  return { volume, small, large, truck, speed };
+};
+
+let smallSpeedSumTemp = 0;
+let smallSpeedCountTemp = 0;
+let largeSpeedSumTemp = 0;
+let largeSpeedCountTemp = 0;
+
+
 function extractVehicleTypesFromRaw(rawApiPayload: any, direction: string) {
   let innerVolS = 0, innerVolL = 0, innerVolT = 0;
   let outerVolS = 0, outerVolL = 0, outerVolT = 0;
   let innerSpeeds: number[] = [];
   let outerSpeeds: number[] = [];
 
-  let smallSpeedSum = 0;
-  let smallSpeedCount = 0;
-  let largeSpeedSum = 0;
-  let largeSpeedCount = 0;
-
-  // 輔助函式 resolveLaneIdentifier: 依據車道序號/LaneID/LaneNo與描述嚴格正確分流 (1: 內側/快車道, 2: 外側/慢車道)
-  const resolveLaneIdentifier = (
-    laneObj: any,
-    defaultIndex: number = 0,
-    totalLanes: number = 2
-  ): 1 | 2 => {
-    if (!laneObj) return defaultIndex === 0 ? 1 : 2;
-
-    // 1. 車道文字描述識別
-    const desc = String(
-      laneObj.LaneType ||
-      laneObj.LaneDesc ||
-      laneObj.LaneName ||
-      laneObj.Description ||
-      laneObj.laneType ||
-      laneObj.laneDesc ||
-      laneObj.laneName ||
-      ""
-    );
-    if (/內|快|inner|fast/i.test(desc)) return 1;
-    if (/外|慢|outer|slow/i.test(desc)) return 2;
-
-    // 2. 容錯處理：提取 LaneID / LaneNo 並以 Number 型別轉換比對
-    const rawLaneVal =
-      laneObj.LaneID ??
-      laneObj.LaneNo ??
-      laneObj.LaneNumber ??
-      laneObj.laneId ??
-      laneObj.laneNo ??
-      laneObj.laneID;
-
-    if (rawLaneVal !== undefined && rawLaneVal !== null && rawLaneVal !== "") {
-      const rawStr = String(rawLaneVal).trim();
-      if (/內|快|inner|fast/i.test(rawStr)) return 1;
-      if (/外|慢|outer|slow/i.test(rawStr)) return 2;
-
-      const numId = Number(rawLaneVal);
-      if (!isNaN(numId)) {
-        // 0-indexed: Lane 0 為內側快車道
-        if (numId === 0) return 1;
-        // Lane 1: 若有多車道且為後續索引 (index >= 1)，代表 0-indexed 之第 2 車道 (外側慢車道)
-        if (numId === 1) {
-          if (defaultIndex >= 1 && totalLanes >= 2) return 2;
-          return 1;
-        }
-        // 1-indexed 之第 2 車道以上皆指派為外側
-        if (numId >= 2) return 2;
-      }
-    }
-
-    // 3. Fallback: 使用索引 (0: 內側, >=1: 外側)
-    return defaultIndex === 0 ? 1 : 2;
-  };
-
-  // 輔助函式 parseLaneVehicles: 提取車速並依 VehicleType 完整遍歷 Vehicles 陣列 (安全 Number 型別轉換)
-  const parseLaneVehicles = (lane: any) => {
-    if (!lane) return { volume: 0, small: 0, large: 0, truck: 0, speed: 0 };
-    let speed = Number(lane.Speed ?? lane.speed ?? 0) || 0;
-    let small = 0;
-    let large = 0;
-    let truck = 0;
-    let totalVeh = 0;
-    let weightedSpeedSum = 0;
-
-    const vehList = Array.isArray(lane.Vehicles)
-      ? lane.Vehicles
-      : Array.isArray(lane.vehicles)
-      ? lane.vehicles
-      : Array.isArray(lane.VehiclesFlow)
-      ? lane.VehiclesFlow
-      : null;
-
-    if (vehList && vehList.length > 0) {
-      vehList.forEach((v: any) => {
-        const vol = Number(v.Volume ?? v.volume ?? v.Flow ?? v.flow ?? v.VehiclesCount ?? v.Count ?? v.count ?? 0) || 0;
-        const spd = Number(v.Speed ?? v.speed ?? 0) || 0;
-        const vType = String(v.VehicleType ?? v.vehicleType ?? v.Type ?? v.type ?? "").trim().toUpperCase();
-
-        if (vType === "S" || vType === "SMALL" || vType === "1" || vType === "CAR") {
-          small += vol;
-          if (vol > 0 && spd > 0) {
-            smallSpeedSum += vol * spd;
-            smallSpeedCount += vol;
-          }
-        } else if (vType === "L" || vType === "LARGE" || vType === "2" || vType === "BUS") {
-          large += vol;
-          if (vol > 0 && spd > 0) {
-            largeSpeedSum += vol * spd;
-            largeSpeedCount += vol;
-          }
-        } else if (vType === "T" || vType === "TRUCK" || vType === "3" || vType === "TRAILER" || vType === "TT") {
-          truck += vol;
-        } else {
-          small += vol;
-          if (vol > 0 && spd > 0) {
-            smallSpeedSum += vol * spd;
-            smallSpeedCount += vol;
-          }
-        }
-
-        if (vol > 0 && spd > 0) {
-          weightedSpeedSum += vol * spd;
-        }
-        totalVeh += vol;
-      });
-
-      if (speed <= 0 && totalVeh > 0 && weightedSpeedSum > 0) {
-        speed = Math.round(weightedSpeedSum / totalVeh);
-      }
-    } else if (lane.Volume !== undefined && lane.Volume !== null) {
-      totalVeh = Number(lane.Volume) || 0;
-      small = totalVeh;
-    } else if (lane.volume !== undefined && lane.volume !== null) {
-      totalVeh = Number(lane.volume) || 0;
-      small = totalVeh;
-    } else if (lane.Flow !== undefined && lane.Flow !== null) {
-      totalVeh = Math.round((Number(lane.Flow) || 0) / 60);
-      small = totalVeh;
-    } else if (lane.flow !== undefined && lane.flow !== null) {
-      totalVeh = Math.round((Number(lane.flow) || 0) / 60);
-      small = totalVeh;
-    }
-
-    const volume = totalVeh > 0 ? totalVeh : (small + large + truck);
-    return { volume, small, large, truck, speed };
-  };
+  smallSpeedSumTemp = 0;
+  smallSpeedCountTemp = 0;
+  largeSpeedSumTemp = 0;
+  largeSpeedCountTemp = 0;
   
   const rawList: any[] = Array.isArray(rawApiPayload?.VDLives)
     ? rawApiPayload.VDLives
@@ -570,8 +822,8 @@ function extractVehicleTypesFromRaw(rawApiPayload: any, direction: string) {
   const totalLarge = innerVolL + outerVolL;
   const totalTruck = innerVolT + outerVolT;
 
-  const smallSpeedKmh = smallSpeedCount > 0 ? Math.round(smallSpeedSum / smallSpeedCount) : Math.round(avgInnerSpeed);
-  const largeSpeedKmh = largeSpeedCount > 0 ? Math.round(largeSpeedSum / largeSpeedCount) : Math.round(avgOuterSpeed);
+  const smallSpeedKmh = smallSpeedCountTemp > 0 ? Math.round(smallSpeedSumTemp / smallSpeedCountTemp) : Math.round(avgInnerSpeed);
+  const largeSpeedKmh = largeSpeedCountTemp > 0 ? Math.round(largeSpeedSumTemp / largeSpeedCountTemp) : Math.round(avgOuterSpeed);
 
   const vehicleBreakdown: VehicleBreakdown = {
     small: totalSmall,
@@ -715,21 +967,56 @@ export function runVdTrafficEstimator(
     }
   }
 
+  // 雙車道即時診斷與高階車流流體力學超敏辨識 (Traffic Fluid Dynamics & Lane Diagnoses)
+  const macroSpeedKmh = calculateMacroSpeedKmh(
+    validatedRecords.map((d) => ({
+      speedKmh: d.lanes.reduce((acc, l) => acc + (l.speedKmh || 0), 0) / (d.lanes.length || 1),
+      flowVehPerHour: d.lanes.reduce((acc, l) => acc + (l.flowVehPerHour || 0), 0),
+    }))
+  );
+
+  const laneDiagnoses: LaneDiagnosisResult[] = [];
+  for (let i = 0; i < validatedRecords.length; i++) {
+    const vd = validatedRecords[i];
+    const prevVd = i > 0 ? validatedRecords[i - 1] : undefined;
+    const diag = diagnoseLaneStatus(vd, prevVd, macroSpeedKmh);
+    laneDiagnoses.push(diag);
+  }
+
   // 烏龜車 (路隊長) 偵測與 20 微元流速上限截斷
   const turtleAlerts = detectTurtleCars(records);
   const lane1Turtle = turtleAlerts.find((a) => a.turtleLaneId === 1);
   const lane2Turtle = turtleAlerts.find((a) => a.turtleLaneId === 2);
 
-  if (lane1Turtle && lane1Trajectory && Array.isArray(lane1Trajectory.segments)) {
+  // 微元阻抗積分聯動：將高階流體力學/烏龜車診斷結果映射至微元切片中
+  const suppressedLane1Diags = laneDiagnoses.filter(
+    (d) => (d.status === "INNER_TURTLE_LANE" || d.status === "LANE1_CLOSED") && d.suppressedSpeedKmh
+  );
+  const suppressedLane2Diags = laneDiagnoses.filter(
+    (d) => (d.status === "OUTER_SLOW_HEAVY_SUPPRESSION" || d.status === "LANE2_CLOSED") && d.suppressedSpeedKmh
+  );
+
+  if ((lane1Turtle || suppressedLane1Diags.length > 0) && lane1Trajectory && Array.isArray(lane1Trajectory.segments)) {
     let cumTime = 0;
     lane1Trajectory.segments = lane1Trajectory.segments.map((seg: RoadSegmentSlice) => {
-      const rawL1Speed = seg.estimatedSegmentSpeedKmh;
-      const isNearTurtle =
-        Math.abs(seg.startMileageKm - lane1Turtle.mileageKm) <= 1.5 ||
-        Math.abs(seg.endMileageKm - lane1Turtle.mileageKm) <= 1.5;
-      const finalL1Speed = isNearTurtle
-        ? Math.max(MIN_PHYSICAL_CRAWL_SPEED_KMH, Math.min(rawL1Speed, lane1Turtle.turtleSpeedKmh))
-        : rawL1Speed;
+      let rawL1Speed = seg.estimatedSegmentSpeedKmh;
+      if (lane1Turtle) {
+        const isNearTurtle =
+          Math.abs(seg.startMileageKm - lane1Turtle.mileageKm) <= 1.5 ||
+          Math.abs(seg.endMileageKm - lane1Turtle.mileageKm) <= 1.5;
+        if (isNearTurtle) {
+          rawL1Speed = Math.min(rawL1Speed, lane1Turtle.turtleSpeedKmh);
+        }
+      }
+      for (const diag of suppressedLane1Diags) {
+        const isNearDiag =
+          Math.abs(seg.startMileageKm - diag.mileageKm) <= 1.5 ||
+          Math.abs(seg.endMileageKm - diag.mileageKm) <= 1.5;
+        if (isNearDiag && diag.suppressedSpeedKmh) {
+          rawL1Speed = Math.min(rawL1Speed, diag.suppressedSpeedKmh);
+        }
+      }
+      const finalL1Speed = Math.max(MIN_PHYSICAL_CRAWL_SPEED_KMH, rawL1Speed);
       const segTime = (seg.lengthKm / finalL1Speed) * 3600;
       cumTime += segTime;
       return {
@@ -744,16 +1031,27 @@ export function runVdTrafficEstimator(
       cumTime > 0 ? lane1Trajectory.totalDistanceKm / (cumTime / 3600) : lane1Trajectory.equivalentTravelSpeedKmh;
   }
 
-  if (lane2Turtle && lane2Trajectory && Array.isArray(lane2Trajectory.segments)) {
+  if ((lane2Turtle || suppressedLane2Diags.length > 0) && lane2Trajectory && Array.isArray(lane2Trajectory.segments)) {
     let cumTime = 0;
     lane2Trajectory.segments = lane2Trajectory.segments.map((seg: RoadSegmentSlice) => {
-      const rawL2Speed = seg.estimatedSegmentSpeedKmh;
-      const isNearTurtle =
-        Math.abs(seg.startMileageKm - lane2Turtle.mileageKm) <= 1.5 ||
-        Math.abs(seg.endMileageKm - lane2Turtle.mileageKm) <= 1.5;
-      const finalL2Speed = isNearTurtle
-        ? Math.max(MIN_PHYSICAL_CRAWL_SPEED_KMH, Math.min(rawL2Speed, lane2Turtle.turtleSpeedKmh))
-        : rawL2Speed;
+      let rawL2Speed = seg.estimatedSegmentSpeedKmh;
+      if (lane2Turtle) {
+        const isNearTurtle =
+          Math.abs(seg.startMileageKm - lane2Turtle.mileageKm) <= 1.5 ||
+          Math.abs(seg.endMileageKm - lane2Turtle.mileageKm) <= 1.5;
+        if (isNearTurtle) {
+          rawL2Speed = Math.min(rawL2Speed, lane2Turtle.turtleSpeedKmh);
+        }
+      }
+      for (const diag of suppressedLane2Diags) {
+        const isNearDiag =
+          Math.abs(seg.startMileageKm - diag.mileageKm) <= 1.5 ||
+          Math.abs(seg.endMileageKm - diag.mileageKm) <= 1.5;
+        if (isNearDiag && diag.suppressedSpeedKmh) {
+          rawL2Speed = Math.min(rawL2Speed, diag.suppressedSpeedKmh);
+        }
+      }
+      const finalL2Speed = Math.max(MIN_PHYSICAL_CRAWL_SPEED_KMH, rawL2Speed);
       const segTime = (seg.lengthKm / finalL2Speed) * 3600;
       cumTime += segTime;
       return {
@@ -1057,6 +1355,46 @@ export function runVdTrafficEstimator(
 
   const congestion = classifyCongestion(officialEquivalentSpeedKmh, avgOccupancy, roadDensity);
 
+  // 整合雙車道即時診斷標籤與全線推薦 (Lane Diagnosis & Recommendation Tag)
+  let activeDiagnosisTag = "雙車道流速均衡";
+  let recommendedLaneTag: "推薦走外側" | "推薦走內側" | "兩邊皆可" | "全線封閉" = "兩邊皆可";
+
+  const closedAllDiag = laneDiagnoses.find((d) => d.status === "ALL_CLOSED");
+  const closedSingleDiag = laneDiagnoses.find((d) => d.status === "LANE1_CLOSED" || d.status === "LANE2_CLOSED");
+  const innerTurtleDiag = laneDiagnoses.find((d) => d.status === "INNER_TURTLE_LANE");
+  const outerSlowDiag = laneDiagnoses.find((d) => d.status === "OUTER_SLOW_HEAVY_SUPPRESSION");
+
+  if (isLane1AllZero && isLane2AllZero) {
+    activeDiagnosisTag = "⛔ 全線雙車道封閉";
+    recommendedLaneTag = "全線封閉";
+  } else if (isLane1AllZero) {
+    activeDiagnosisTag = "⛔ 內側車道封閉";
+    recommendedLaneTag = "推薦走外側";
+  } else if (isLane2AllZero) {
+    activeDiagnosisTag = "⛔ 外側車道封閉";
+    recommendedLaneTag = "推薦走內側";
+  } else if (closedAllDiag) {
+    activeDiagnosisTag = closedAllDiag.statusLabel;
+    recommendedLaneTag = closedAllDiag.recommendedLaneTag;
+  } else if (closedSingleDiag) {
+    activeDiagnosisTag = `${closedSingleDiag.vdId} ${closedSingleDiag.statusLabel}`;
+    recommendedLaneTag = closedSingleDiag.recommendedLaneTag;
+  } else if (innerTurtleDiag) {
+    activeDiagnosisTag = innerTurtleDiag.triggeredThresholdLabel || `🐢 內側烏龜車道 (${innerTurtleDiag.vdId} ΔV: ${innerTurtleDiag.speedDeltaKmh.toFixed(1)} km/h)`;
+    recommendedLaneTag = "推薦走外側";
+  } else if (outerSlowDiag) {
+    activeDiagnosisTag = outerSlowDiag.triggeredThresholdLabel || `⚠️ 外側慢速/大車壓制 (${outerSlowDiag.vdId} ΔV: ${outerSlowDiag.speedDeltaKmh.toFixed(1)} km/h)`;
+    recommendedLaneTag = "推薦走內側";
+  } else if (diffRoundedSec >= 10) {
+    if (lane1State.travelTimeSec < lane2State.travelTimeSec) {
+      recommendedLaneTag = "推薦走內側";
+      activeDiagnosisTag = `內側車道較快 (領先 ${diffRoundedSec} 秒)`;
+    } else {
+      recommendedLaneTag = "推薦走外側";
+      activeDiagnosisTag = `外側車道較快 (領先 ${diffRoundedSec} 秒)`;
+    }
+  }
+
   const estimated_state: EstimatedState = {
     timestamp: new Date().toLocaleTimeString("zh-TW", { hour12: false }),
     direction,
@@ -1110,6 +1448,9 @@ export function runVdTrafficEstimator(
       laneCouplingFriction: learnedParams.laneCouplingFriction,
       doubleVerification,
       isExtremeSituation: doubleVerification.isExtremeSituation,
+      laneDiagnoses,
+      activeDiagnosisTag,
+      recommendedLaneTag,
     },
 
     // 極端情況雙重重算驗證機制與模式註記 (Double Verification & Mode Tracking)

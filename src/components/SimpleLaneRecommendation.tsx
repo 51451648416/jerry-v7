@@ -105,6 +105,17 @@ export default function SimpleLaneRecommendation({
           </div>
 
           <div className="flex items-center gap-1.5 text-[11px] font-mono text-slate-500">
+            {estState.laneComparison?.activeDiagnosisTag && (
+              <span className={`px-2 py-0.5 font-bold rounded-md border flex items-center gap-1 ${
+                estState.laneComparison.activeDiagnosisTag.includes("封閉")
+                  ? "bg-rose-50 text-rose-700 border-rose-200"
+                  : estState.laneComparison.activeDiagnosisTag.includes("烏龜") || estState.laneComparison.activeDiagnosisTag.includes("壓制")
+                  ? "bg-amber-50 text-amber-800 border-amber-200"
+                  : "bg-emerald-50 text-emerald-700 border-emerald-200/60"
+              }`}>
+                <span>{estState.laneComparison.activeDiagnosisTag}</span>
+              </span>
+            )}
             {estState.isLateNightHours && (
               <span className="px-2 py-0.5 bg-indigo-50 text-indigo-700 font-bold rounded-md border border-indigo-200 flex items-center gap-1">
                 <span>🌙 02~04 原API直通</span>

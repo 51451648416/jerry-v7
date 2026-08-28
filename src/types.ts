@@ -181,6 +181,11 @@ export interface LaneComparison {
   closedLaneId?: number; // 封閉車道編號 (1: 內側, 2: 外側)
   closureNotice?: string; // 封閉特別告示
   
+  // 雙車道烏龜車與速差自動診斷 (Dual-Lane Turtle Car & Speed Differential Diagnosis)
+  laneDiagnoses?: LaneDiagnosisResult[];
+  activeDiagnosisTag?: string; // e.g. "內側烏龜車道 (ΔV ≥ 10 km/h)" | "外側慢速/大車壓制 (ΔV ≥ 6 km/h)" | "車道封閉" | "雙車道流速均衡"
+  recommendedLaneTag?: "推薦走外側" | "推薦走內側" | "兩邊皆可" | "全線封閉";
+  
   // 隧道內在線訓練之車道切換與分流決策指標 (Trained Lane Switching & Allocation State)
   trainedSwitchMarginSec?: number; // 經機器學習校準之動態車道切換時間差門檻 (秒)
   trainedLaneSelectionConfidence?: number; // 車道推薦決策信心度 (%)
@@ -190,6 +195,36 @@ export interface LaneComparison {
   // 極端情況雙重重算驗證機制 (Double Verification for Extreme Lane Divergence)
   doubleVerification?: DoubleVerificationState;
   isExtremeSituation?: boolean; // 若重算後雙車道速差仍 > 23 km/h，直接顯示並展示 API 原始數據
+}
+
+export type LaneDiagnosisStatus =
+  | "LANE1_CLOSED"
+  | "LANE2_CLOSED"
+  | "ALL_CLOSED"
+  | "INNER_TURTLE_LANE"
+  | "OUTER_SLOW_HEAVY_SUPPRESSION"
+  | "NORMAL_BALANCED";
+
+export interface LaneDiagnosisResult {
+  vdId: string;
+  mileageKm: number;
+  innerSpeedKmh: number;
+  outerSpeedKmh: number;
+  innerFlowVehPerHour: number;
+  outerFlowVehPerHour: number;
+  speedDeltaKmh: number;
+  status: LaneDiagnosisStatus;
+  statusLabel: string; // e.g. "車道封閉" | "內側烏龜車道" | "外側慢速/大車壓制" | "雙車道流速均衡"
+  description: string;
+  recommendedLane: "內側車道" | "外側車道" | "兩邊皆可" | null;
+  recommendedLaneId: 1 | 2 | null;
+  recommendedLaneTag: "推薦走內側" | "推薦走外側" | "兩邊皆可" | "全線封閉";
+  isClosed: boolean;
+  closedLaneId?: 1 | 2 | null;
+  turtleLaneId?: 1 | 2 | null;
+  suppressedSpeedKmh?: number;
+  normalSpeedKmh?: number;
+  triggeredThresholdLabel?: string; // e.g. "ΔV ≥ 10 km/h (內側烏龜)" | "ΔV ≥ 6 km/h (外側壓制)" | "流量流速為0 (封閉)"
 }
 
 export interface ApiDirectVdTelemetry {

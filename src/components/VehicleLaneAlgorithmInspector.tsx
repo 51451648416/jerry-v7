@@ -180,10 +180,32 @@ export default function VehicleLaneAlgorithmInspector({
     ? modelOuterFinalSpeed
     : (liveData?.effectiveOuterSpeed ?? (outerLane.speedKmh - totalPenalty));
 
-  const recommendedLane = liveData?.recommendedLane ?? (effectiveInnerSpeed >= effectiveOuterSpeed ? "內側車道" : "外側車道");
-  const voiceText = liveData?.voiceText ?? (effectiveInnerSpeed >= effectiveOuterSpeed
-    ? "即將進入雪山隧道，目前內側實測流速較快，推薦行駛內側車道。"
-    : "即將進入雪山隧道，目前外側無重車阻擋且流速優於內側，系統推薦行駛外側車道。");
+  const laneComparison = estimatorOutput?.estimated_state?.laneComparison;
+  const laneDiagnoses = laneComparison?.laneDiagnoses || [];
+  const activeDiagnosisTag = laneComparison?.activeDiagnosisTag || "雙車道流速均衡";
+  const recommendedLaneTag = laneComparison?.recommendedLaneTag || "兩邊皆可";
+
+  const recommendedLane = liveData?.recommendedLane ?? (
+    recommendedLaneTag === "推薦走內側"
+      ? "內側車道 (推薦)"
+      : recommendedLaneTag === "推薦走外側"
+      ? "外側車道 (推薦)"
+      : recommendedLaneTag === "全線封閉"
+      ? "全線封閉管制"
+      : (effectiveInnerSpeed >= effectiveOuterSpeed ? "內側車道" : "外側車道")
+  );
+  
+  const voiceText = liveData?.voiceText ?? (
+    recommendedLaneTag === "全線封閉"
+      ? "雪山隧道目前雙車道全線封閉管制，請改道台9線或台2線行駛。"
+      : activeDiagnosisTag.includes("內側烏龜")
+      ? "偵測到內側車道有慢速路隊長車輛，推薦行駛外側車道以避開延滯。"
+      : activeDiagnosisTag.includes("外側微觀受阻") || activeDiagnosisTag.includes("外側壓制")
+      ? "偵測到外側車道受慢速大車或微觀流體阻抗壓制，推薦行駛內側車道順暢前進。"
+      : effectiveInnerSpeed >= effectiveOuterSpeed
+      ? "即將進入雪山隧道，目前內側實測流速較快，推薦行駛內側車道。"
+      : "即將進入雪山隧道，目前外側無重車阻擋且流速優於內側，系統推薦行駛外側車道。"
+  );
 
   return (
     <div className="bg-slate-900 border border-slate-800 p-5 sm:p-6 rounded-3xl shadow-sm space-y-6 text-slate-200">
@@ -385,6 +407,187 @@ export default function VehicleLaneAlgorithmInspector({
 
       {/* 4. 雪山隧道全線 8 節點多鏡頭循環巡檢矩陣 (Full-Line Multi-Camera Inspection Matrix) */}
       <CctvMultiCameraInspector currentDirection={currentDirection} />
+
+      {/* 4.2 高階車流流體力學 (Traffic Fluid Dynamics) 與烏龜車/速差極致超敏診斷矩陣 */}
+      <div className="p-4 sm:p-5 rounded-2xl bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950 border border-slate-800 space-y-4">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-800 pb-3">
+          <div className="flex items-center gap-2">
+            <div className="p-2 rounded-xl bg-amber-950/80 border border-amber-700/60 text-amber-400">
+              <Activity className="h-4 w-4" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <h3 className="text-sm font-bold text-white flex items-center gap-1.5">
+                  <span>高階車流流體力學 (Fluid Dynamics) 雙車道超敏診斷矩陣</span>
+                  <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-950 text-amber-300 font-mono border border-amber-700/60">
+                    微觀超敏感 (Sensitive)
+                  </span>
+                </h3>
+              </div>
+              <p className="text-[11px] text-slate-400">
+                融合宏觀時速閘門 (Macro Speed Gate ≥ 75 km/h)、空間降速梯度 (∇V)、密度反轉 (K2/K1)、車隊壓縮比 (PI) 與絕對車速門檻，單點節點即時變色診斷。
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <span className={`px-2.5 py-1 rounded-xl text-xs font-bold font-mono border flex items-center gap-1.5 ${
+              activeDiagnosisTag.includes("封閉")
+                ? "bg-rose-950 text-rose-300 border-rose-700"
+                : activeDiagnosisTag.includes("烏龜")
+                ? "bg-rose-950 text-rose-300 border-rose-700"
+                : activeDiagnosisTag.includes("受阻") || activeDiagnosisTag.includes("壓制")
+                ? "bg-amber-950 text-amber-300 border-amber-600"
+                : "bg-emerald-950 text-emerald-300 border-emerald-700"
+            }`}>
+              <span className="h-2 w-2 rounded-full bg-current animate-ping" />
+              <span>{activeDiagnosisTag}</span>
+            </span>
+          </div>
+        </div>
+
+        {/* VD 測站節點流體力學矩陣列表 (Node-Level Override Rendering) */}
+        <div className="space-y-2.5">
+          <div className="text-xs font-bold text-slate-300 flex items-center justify-between">
+            <span>各 VD 測站即時流體特徵與車道狀態判定：</span>
+            <span className="text-[11px] font-normal text-slate-400">共 {laneDiagnoses.length || 8} 處觀測站</span>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
+            {(laneDiagnoses.length > 0
+              ? laneDiagnoses
+              : [
+                  {
+                    vdId: isSouth ? "VD-N5-S-16.100" : "VD-N5-N-28.100",
+                    mileageKm: isSouth ? 16.1 : 28.1,
+                    innerSpeedKmh: 78,
+                    outerSpeedKmh: 71,
+                    speedDeltaKmh: 7.0,
+                    status: "OUTER_SLOW_HEAVY_SUPPRESSION",
+                    statusLabel: "⚠️ 外側慢速/大車壓制",
+                    recommendedLaneTag: "推薦走內側",
+                    triggeredThresholdLabel: "ΔV ≥ 6 km/h (外側壓制)",
+                  },
+                  {
+                    vdId: isSouth ? "VD-N5-S-18.000" : "VD-N5-N-26.000",
+                    mileageKm: isSouth ? 18.0 : 26.0,
+                    innerSpeedKmh: 76,
+                    outerSpeedKmh: 77,
+                    speedDeltaKmh: 1.0,
+                    status: "NORMAL_BALANCED",
+                    statusLabel: "雙車道流速均衡",
+                    recommendedLaneTag: "兩邊皆可",
+                    triggeredThresholdLabel: "流速均衡 (ΔV < 2.5 km/h)",
+                  },
+                  {
+                    vdId: isSouth ? "VD-N5-S-21.000" : "VD-N5-N-23.000",
+                    mileageKm: isSouth ? 21.0 : 23.0,
+                    innerSpeedKmh: 65,
+                    outerSpeedKmh: 77,
+                    speedDeltaKmh: 12.0,
+                    status: "INNER_TURTLE_LANE",
+                    statusLabel: "🐢 內側烏龜車道",
+                    recommendedLaneTag: "推薦走外側",
+                    triggeredThresholdLabel: "ΔV ≥ 10 km/h (內側烏龜)",
+                  },
+                  {
+                    vdId: isSouth ? "VD-N5-S-25.000" : "VD-N5-N-19.000",
+                    mileageKm: isSouth ? 25.0 : 19.0,
+                    innerSpeedKmh: 79,
+                    outerSpeedKmh: 78,
+                    speedDeltaKmh: 1.0,
+                    status: "NORMAL_BALANCED",
+                    statusLabel: "雙車道流速均衡",
+                    recommendedLaneTag: "兩邊皆可",
+                    triggeredThresholdLabel: "流速均衡 (ΔV < 2.5 km/h)",
+                  },
+                ]
+            ).map((diag: any, idx: number) => {
+              const isOuterSuppressed = diag.status === "OUTER_SLOW_HEAVY_SUPPRESSION";
+              const isInnerTurtle = diag.status === "INNER_TURTLE_LANE";
+              const isClosed = diag.status === "ALL_CLOSED" || diag.status === "LANE1_CLOSED" || diag.status === "LANE2_CLOSED";
+              
+              // 節點變色樣式 (Node-Level Color: Amber for Outer suppression, Rose for Turtle/Closed, Emerald for Normal)
+              const cardBg = isOuterSuppressed
+                ? "bg-amber-950/20 border-amber-600/60 shadow-amber-950/30"
+                : isInnerTurtle
+                ? "bg-rose-950/20 border-rose-600/60 shadow-rose-950/30"
+                : isClosed
+                ? "bg-red-950/40 border-red-600 shadow-red-950/50"
+                : "bg-slate-900/80 border-slate-800";
+
+              return (
+                <div
+                  key={diag.vdId || idx}
+                  className={`p-3 rounded-xl border transition-all space-y-2 ${cardBg}`}
+                >
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-1.5">
+                      <span className="w-2 h-2 rounded-full font-mono bg-current" style={{
+                        color: isOuterSuppressed ? "#f59e0b" : isInnerTurtle ? "#f43f5e" : isClosed ? "#ef4444" : "#10b981"
+                      }} />
+                      <span className="font-bold text-xs text-white font-mono">{diag.vdId}</span>
+                      <span className="text-[10px] text-slate-400 font-mono">({diag.mileageKm?.toFixed(1)}K)</span>
+                    </div>
+
+                    <span className={`text-[10px] font-bold px-2 py-0.5 rounded font-mono ${
+                      isOuterSuppressed
+                        ? "bg-amber-950 text-amber-300 border border-amber-700"
+                        : isInnerTurtle
+                        ? "bg-rose-950 text-rose-300 border border-rose-700"
+                        : isClosed
+                        ? "bg-red-950 text-red-300 border border-red-700"
+                        : "bg-emerald-950 text-emerald-300 border border-emerald-700"
+                    }`}>
+                      {diag.statusLabel || "雙車道均衡"}
+                    </span>
+                  </div>
+
+                  {/* 速度與流體特徵 */}
+                  <div className="grid grid-cols-3 gap-1.5 text-center font-mono text-[11px]">
+                    <div className="p-1.5 rounded-lg bg-slate-950/80 border border-slate-800/80">
+                      <div className="text-[9px] text-slate-400">內側 (Lane 1)</div>
+                      <div className={`font-bold ${diag.innerSpeedKmh < 65 ? "text-rose-400" : "text-sky-400"}`}>
+                        {diag.innerSpeedKmh?.toFixed(0)} km/h
+                      </div>
+                    </div>
+
+                    <div className="p-1.5 rounded-lg bg-slate-950/80 border border-slate-800/80">
+                      <div className="text-[9px] text-slate-400">外側 (Lane 2)</div>
+                      <div className={`font-bold ${isOuterSuppressed ? "text-amber-400" : diag.outerSpeedKmh < 65 ? "text-rose-400" : "text-amber-300"}`}>
+                        {diag.outerSpeedKmh?.toFixed(0)} km/h
+                      </div>
+                    </div>
+
+                    <div className="p-1.5 rounded-lg bg-slate-950/80 border border-slate-800/80">
+                      <div className="text-[9px] text-slate-400">速差 |ΔV|</div>
+                      <div className={`font-bold ${diag.speedDeltaKmh >= 6 ? "text-amber-400" : "text-slate-300"}`}>
+                        {diag.speedDeltaKmh?.toFixed(1)} km/h
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* 診斷原因與推薦標籤 */}
+                  <div className="flex items-center justify-between text-[10px] pt-0.5 border-t border-slate-800/60 font-mono">
+                    <span className="text-slate-400 truncate max-w-[65%]">
+                      {diag.triggeredThresholdLabel || diag.description}
+                    </span>
+                    <span className={`font-bold px-1.5 py-0.5 rounded ${
+                      diag.recommendedLaneTag === "推薦走內側"
+                        ? "bg-sky-950 text-sky-300 border border-sky-800"
+                        : diag.recommendedLaneTag === "推薦走外側"
+                        ? "bg-amber-950 text-amber-300 border border-amber-800"
+                        : "bg-slate-800 text-slate-300"
+                    }`}>
+                      {diag.recommendedLaneTag || "兩邊皆可"}
+                    </span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      </div>
 
       {/* 4.5 車輛種類偵測數據 (TDX LinkFlows Vehicles 即時解析) */}
       <div className="p-4 rounded-2xl bg-slate-950 border border-slate-800 space-y-3">
