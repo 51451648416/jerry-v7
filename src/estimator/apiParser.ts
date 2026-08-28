@@ -226,22 +226,15 @@ export function parseRawTdxVdPayload(
     // 車道數據提取
     const lanes: RawApiDetectorRecord["lanes"] = [];
 
-    // 輔助函式 resolveLaneIdentifier: 嚴格依據 LaneID 或車道描述匹配車道編號 (1: 內側, 2: 外側)
-    const resolveLaneIdentifier = (laneObj: any, indexFallback?: number): 1 | 2 | null => {
-      if (!laneObj) return null;
+    // 輔助函式 resolveLaneIdentifier: 依據車道序號/LaneID/LaneNo與描述嚴格正確分流 (1: 內側/快車道, 2: 外側/慢車道)
+    const resolveLaneIdentifier = (
+      laneObj: any,
+      indexFallback: number = 0,
+      totalLanes: number = 2
+    ): 1 | 2 => {
+      if (!laneObj) return indexFallback === 0 ? 1 : 2;
 
-      const rawLaneId = laneObj.LaneID ?? laneObj.LaneNumber ?? laneObj.laneId ?? laneObj.LaneNo ?? laneObj.laneID;
-      if (rawLaneId !== undefined && rawLaneId !== null && rawLaneId !== "") {
-        const numId = Number(rawLaneId);
-        if (!isNaN(numId)) {
-          if (numId === 1) return 1;
-          if (numId === 2) return 2;
-        }
-        const strId = String(rawLaneId).trim();
-        if (strId === "1") return 1;
-        if (strId === "2") return 2;
-      }
-
+      // 1. 車道文字描述識別
       const desc = String(
         laneObj.LaneType ||
         laneObj.LaneDesc ||
@@ -255,15 +248,39 @@ export function parseRawTdxVdPayload(
       if (/內|快|inner|fast/i.test(desc)) return 1;
       if (/外|慢|outer|slow/i.test(desc)) return 2;
 
-      if (typeof indexFallback === "number") {
-        if (indexFallback === 0) return 1;
-        if (indexFallback === 1) return 2;
+      // 2. 容錯處理：提取 LaneID / LaneNo 並以 Number 型別轉換比對
+      const rawLaneVal =
+        laneObj.LaneID ??
+        laneObj.LaneNo ??
+        laneObj.LaneNumber ??
+        laneObj.laneId ??
+        laneObj.laneNo ??
+        laneObj.laneID;
+
+      if (rawLaneVal !== undefined && rawLaneVal !== null && rawLaneVal !== "") {
+        const rawStr = String(rawLaneVal).trim();
+        if (/內|快|inner|fast/i.test(rawStr)) return 1;
+        if (/外|慢|outer|slow/i.test(rawStr)) return 2;
+
+        const numId = Number(rawLaneVal);
+        if (!isNaN(numId)) {
+          // 0-indexed: Lane 0 為內側快車道
+          if (numId === 0) return 1;
+          // Lane 1: 若有多車道且為後續索引 (index >= 1)，代表 0-indexed 之第 2 車道 (外側慢車道)
+          if (numId === 1) {
+            if (indexFallback >= 1 && totalLanes >= 2) return 2;
+            return 1;
+          }
+          // 1-indexed 之第 2 車道以上皆指派為外側
+          if (numId >= 2) return 2;
+        }
       }
 
-      return null;
+      // 3. Fallback: 使用索引 (0: 內側, >=1: 外側)
+      return indexFallback === 0 ? 1 : 2;
     };
 
-    // 輔助函式 parseLaneVehicles
+    // 輔助函式 parseLaneVehicles: 提取車速並依 VehicleType 完整遍歷各車種
     const parseLaneVehicles = (laneObj: any) => {
       let totalFlowVehPerHr = 0;
       let weightedSpeedSum = 0;
@@ -340,13 +357,13 @@ export function parseRawTdxVdPayload(
       };
     };
 
-    // 嚴格依據 LaneID 映射車道（嚴禁使用陣列固定索引與跨車道 fallback 拷貝）
+    // 嚴格依據 LaneID/LaneNo 與車道序號映射車道（嚴禁全部累加至同一車道）
     const rawLanes = item.LinkFlows?.[0]?.Lanes || item.lanes || item.Lanes || [];
 
     if (Array.isArray(rawLanes) && rawLanes.length > 0) {
       const addedLaneIds = new Set<number>();
       rawLanes.forEach((laneObj: any, lIdx: number) => {
-        const laneId = resolveLaneIdentifier(laneObj, rawLanes.length >= 2 ? lIdx : undefined);
+        const laneId = resolveLaneIdentifier(laneObj, lIdx, rawLanes.length);
         if (laneId === 1 || laneId === 2) {
           if (!addedLaneIds.has(laneId)) {
             addedLaneIds.add(laneId);

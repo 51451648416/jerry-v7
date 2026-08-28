@@ -459,13 +459,23 @@ export class TdxKeyRotationSystem {
   }
 
   /**
-   * 取得當前輪值中的金鑰
+   * 取得當前輪值中的金鑰 (優先選取健康之金鑰組)
    */
   public getActiveKeyPair(): TdxKeyPair {
     if (this.keyPairs.length === 0) {
       this.initializeKeys();
     }
-    return this.keyPairs[this.activeIndex % this.keyPairs.length];
+    const current = this.keyPairs[this.activeIndex % this.keyPairs.length];
+    if (current && current.isHealthy) {
+      return current;
+    }
+    // 若當前金鑰已被標記為不健康，搜尋第一組健康的金鑰
+    const healthyIndex = this.keyPairs.findIndex((k) => k.isHealthy);
+    if (healthyIndex !== -1) {
+      this.activeIndex = healthyIndex;
+      return this.keyPairs[healthyIndex];
+    }
+    return current || this.keyPairs[0];
   }
 
   /**
@@ -493,8 +503,8 @@ export class TdxKeyRotationSystem {
     currentKey.failCount += 1;
     currentKey.lastError = reason;
 
-    // 若單一金鑰連續失敗 >= 3 次，暫時標記為異常
-    if (currentKey.failCount >= 3) {
+    // 若單一金鑰連續失敗 >= 2 次或為認證錯誤，標記為異常
+    if (currentKey.failCount >= 2 || reason.includes("400") || reason.includes("Invalid client credentials")) {
       currentKey.isHealthy = false;
     }
 
@@ -557,6 +567,10 @@ export class TdxKeyRotationSystem {
       } else {
         const raw = await response.text().catch(() => "");
         errText = raw.length > 200 ? raw.substring(0, 200) + "..." : raw;
+      }
+      if (status === 400 || errText.includes("Invalid client credentials")) {
+        pair.isHealthy = false;
+        pair.failCount = 10;
       }
       const err = new Error(`TDX 認證伺服器回應失敗 (${status}): ${errText}`);
       (err as any).isAuthError = status === 400 || status === 401 || status === 403 || status === 429;
@@ -655,9 +669,9 @@ export class TdxKeyRotationSystem {
             headers: reqHeaders,
             body: options.body,
           },
-          10000,
-          1,
-          1000
+          25000,
+          2,
+          1500
         );
 
         const status = response.status;
