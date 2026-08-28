@@ -198,6 +198,131 @@ async function fetchTdxDataWithFailover<T>(
   throw lastError || new Error("所有 TDX 輪替金鑰皆無法成功獲取資料");
 }
 
+// 輔助函式：遍歷 TDX VD 資料中各 LinkFlows/Lanes 之 Vehicles，統計各車種流量與即時車速
+export function parseVehicleBreakdown(vdData: any) {
+  const rawList: any[] = Array.isArray(vdData?.VDLives)
+    ? vdData.VDLives
+    : Array.isArray(vdData)
+    ? vdData
+    : Array.isArray(vdData?.data)
+    ? vdData.data
+    : [];
+
+  let totalSmall = 0;
+  let totalLarge = 0;
+  let totalTruck = 0;
+
+  let northSmall = 0;
+  let northLarge = 0;
+  let northTruck = 0;
+
+  let southSmall = 0;
+  let southLarge = 0;
+  let southTruck = 0;
+
+  let smallSpeedSum = 0;
+  let smallSpeedCount = 0;
+  let largeSpeedSum = 0;
+  let largeSpeedCount = 0;
+
+  for (const item of rawList) {
+    if (!item) continue;
+    const vdid = String(item.VDID || item.detectorId || "");
+    const isNorth =
+      /-N-|-NB-|-N(?=[-_]|$)|北向|北上|\bNB\b/i.test(vdid) ||
+      String(item.Direction || "").toUpperCase() === "N";
+    const isSouth =
+      /-S-|-SB-|-S(?=[-_]|$)|南向|南下|\bSB\b/i.test(vdid) ||
+      String(item.Direction || "").toUpperCase() === "S";
+
+    // 完整遍歷所有 LinkFlows 底下的 Lanes
+    const linkFlows = Array.isArray(item.LinkFlows) ? item.LinkFlows : [];
+    const lanesList: any[] = [];
+
+    if (linkFlows.length > 0) {
+      for (const lf of linkFlows) {
+        if (Array.isArray(lf?.Lanes)) {
+          lanesList.push(...lf.Lanes);
+        }
+      }
+    } else if (Array.isArray(item.Lanes)) {
+      lanesList.push(...item.Lanes);
+    } else if (Array.isArray(item.lanes)) {
+      lanesList.push(...item.lanes);
+    }
+
+    for (const lane of lanesList) {
+      if (!lane) continue;
+      if (Array.isArray(lane.Vehicles) && lane.Vehicles.length > 0) {
+        for (const v of lane.Vehicles) {
+          const vol = typeof v.Volume === "number" ? v.Volume : 0;
+          const spd = typeof v.Speed === "number" && v.Speed > 0 ? v.Speed : 0;
+          const vType = String(v.VehicleType || "").trim().toUpperCase();
+
+          if (vType === "S" || vType === "SMALL" || vType === "1" || vType === "CAR") {
+            totalSmall += vol;
+            if (isNorth) northSmall += vol;
+            if (isSouth) southSmall += vol;
+            if (vol > 0 && spd > 0) {
+              smallSpeedSum += vol * spd;
+              smallSpeedCount += vol;
+            }
+          } else if (vType === "L" || vType === "LARGE" || vType === "2" || vType === "BUS") {
+            totalLarge += vol;
+            if (isNorth) northLarge += vol;
+            if (isSouth) southLarge += vol;
+            if (vol > 0 && spd > 0) {
+              largeSpeedSum += vol * spd;
+              largeSpeedCount += vol;
+            }
+          } else if (vType === "T" || vType === "TRUCK" || vType === "3" || vType === "TRAILER" || vType === "TT") {
+            totalTruck += vol;
+            if (isNorth) northTruck += vol;
+            if (isSouth) southTruck += vol;
+          } else {
+            // 未特別指定車種者預設歸為小型車
+            totalSmall += vol;
+            if (isNorth) northSmall += vol;
+            if (isSouth) southSmall += vol;
+            if (vol > 0 && spd > 0) {
+              smallSpeedSum += vol * spd;
+              smallSpeedCount += vol;
+            }
+          }
+        }
+      } else if (typeof lane.Volume === "number" && lane.Volume > 0) {
+        totalSmall += lane.Volume;
+        if (isNorth) northSmall += lane.Volume;
+        if (isSouth) southSmall += lane.Volume;
+      }
+    }
+  }
+
+  const smallSpeedKmh = smallSpeedCount > 0 ? Math.round(smallSpeedSum / smallSpeedCount) : 75;
+  const largeSpeedKmh = largeSpeedCount > 0 ? Math.round(largeSpeedSum / largeSpeedCount) : 72;
+
+  return {
+    small: totalSmall,
+    large: totalLarge,
+    truck: totalTruck,
+    total: totalSmall + totalLarge,
+    smallSpeedKmh,
+    largeSpeedKmh,
+    north: {
+      small: northSmall,
+      large: northLarge,
+      truck: northTruck,
+      total: northSmall + northLarge,
+    },
+    south: {
+      small: southSmall,
+      large: southLarge,
+      truck: southTruck,
+      total: southSmall + southLarge,
+    },
+  };
+}
+
 export default async function handler(req: any, res: any) {
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
@@ -247,6 +372,9 @@ export default async function handler(req: any, res: any) {
     const liveEventsData = liveEventsRes.status === "fulfilled" ? liveEventsRes.value.data : { LiveEvents: [] };
     const rampMeterData = rampMeterRes.status === "fulfilled" ? rampMeterRes.value.data : [];
 
+    // 解析車種流量 (S/L/T) 與即時平均車速
+    const vehicleBreakdown = parseVehicleBreakdown(vdData);
+
     const now = Date.now();
     const payload = {
       syncedAt: now,
@@ -254,6 +382,7 @@ export default async function handler(req: any, res: any) {
       vdData,
       liveEvents: liveEventsData,
       rampMetering: rampMeterData,
+      vehicleBreakdown,
       keyUsed,
       executionMs: Date.now() - startTime,
       status: "OK",
@@ -278,6 +407,7 @@ export default async function handler(req: any, res: any) {
       ttl: 90,
       syncedAt: new Date(now).toISOString(),
       keyUsed,
+      vehicleBreakdown,
       recordsCount: Array.isArray(vdData) ? vdData.length : (vdData?.VDLives?.length || 0),
       durationMs: Date.now() - startTime,
     });

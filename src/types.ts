@@ -32,6 +32,45 @@ export type TrafficSpeedRegime =
   | "REGIME_50_60"
   | "REGIME_LT_50";
 
+export interface VehicleBreakdown {
+  small: number;
+  large: number;
+  truck?: number;
+  total: number;
+  smallSpeedKmh?: number;
+  largeSpeedKmh?: number;
+  north?: {
+    small: number;
+    large: number;
+    truck?: number;
+    total: number;
+    smallSpeedKmh?: number;
+    largeSpeedKmh?: number;
+  };
+  south?: {
+    small: number;
+    large: number;
+    truck?: number;
+    total: number;
+    smallSpeedKmh?: number;
+    largeSpeedKmh?: number;
+  };
+  innerLane?: {
+    speedKmh: number;
+    volumeS: number;
+    volumeL: number;
+    volumeT: number;
+    total: number;
+  };
+  outerLane?: {
+    speedKmh: number;
+    volumeS: number;
+    volumeL: number;
+    volumeT: number;
+    total: number;
+  };
+}
+
 export interface ApiLatencyMetrics {
   apiTimestamp?: string;
   receivedTimestamp?: string;
@@ -370,6 +409,9 @@ export interface EstimatedState {
 
   // 雲端 CCTV 影像辨識與地面 VD 交叉驗證狀態 (Cloud Vision & Ground VD Cross Validation)
   cctvCrossValidation?: CctvVdCrossValidationState;
+
+  // 即時車種流量與平均車速統計 (Vehicle Breakdown Statistics)
+  vehicleBreakdown?: VehicleBreakdown;
 }
 
 export interface CorridorInterchange {

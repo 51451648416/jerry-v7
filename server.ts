@@ -591,7 +591,20 @@ let globalLatestLaneRecommendation: Record<"N" | "S", any> = {
 export function extractDirectionalEntranceVdData(
   vdPayload: any,
   direction: "N" | "S" = "N"
-): { innerLane: VDLaneData; outerLane: VDLaneData; vdCount: number; direction: "N" | "S" } {
+): {
+  innerLane: VDLaneData;
+  outerLane: VDLaneData;
+  vehicleBreakdown: {
+    small: number;
+    large: number;
+    truck: number;
+    total: number;
+    smallSpeedKmh: number;
+    largeSpeedKmh: number;
+  };
+  vdCount: number;
+  direction: "N" | "S";
+} {
   const rawList: any[] = Array.isArray(vdPayload?.VDLives)
     ? vdPayload.VDLives
     : Array.isArray(vdPayload)
@@ -655,15 +668,21 @@ export function extractDirectionalEntranceVdData(
 
     matchedVdCount++;
 
-    // 解析 LinkFlows[0].Lanes
-    const lanes =
-      (Array.isArray(item.LinkFlows) && item.LinkFlows[0] && Array.isArray(item.LinkFlows[0].Lanes)
-        ? item.LinkFlows[0].Lanes
-        : Array.isArray(item.Lanes)
-        ? item.Lanes
-        : Array.isArray(item.lanes)
-        ? item.lanes
-        : []) as any[];
+    // 完整解析所有 LinkFlows 陣列底下的 Lanes
+    const linkFlows = Array.isArray(item.LinkFlows) ? item.LinkFlows : [];
+    const lanes: any[] = [];
+
+    if (linkFlows.length > 0) {
+      for (const lf of linkFlows) {
+        if (Array.isArray(lf?.Lanes)) {
+          lanes.push(...lf.Lanes);
+        }
+      }
+    } else if (Array.isArray(item.Lanes)) {
+      lanes.push(...item.Lanes);
+    } else if (Array.isArray(item.lanes)) {
+      lanes.push(...item.lanes);
+    }
 
     lanes.forEach((laneObj: any, lIdx: number) => {
       // 交通部 TDX 國道車道劃分標準：
@@ -682,14 +701,14 @@ export function extractDirectionalEntranceVdData(
       let vL = 0;
       let vT = 0;
 
-      if (Array.isArray(laneObj.Vehicles)) {
+      if (Array.isArray(laneObj.Vehicles) && laneObj.Vehicles.length > 0) {
         let weightedSpeedSum = 0;
         let totalVeh = 0;
 
         laneObj.Vehicles.forEach((v: any) => {
           const vol = typeof v.Volume === "number" ? v.Volume : 0;
           const spd = typeof v.Speed === "number" ? v.Speed : 0;
-          const vType = String(v.VehicleType || "").toUpperCase();
+          const vType = String(v.VehicleType || "").trim().toUpperCase();
 
           if (vType === "S" || vType === "SMALL" || vType === "1" || vType === "CAR") {
             vS += vol;
@@ -733,6 +752,10 @@ export function extractDirectionalEntranceVdData(
   const avgInnerSpeed = innerSpeeds.length > 0 ? innerSpeeds.reduce((a, b) => a + b, 0) / innerSpeeds.length : defaultInner;
   const avgOuterSpeed = outerSpeeds.length > 0 ? outerSpeeds.reduce((a, b) => a + b, 0) / outerSpeeds.length : defaultOuter;
 
+  const totalSmall = innerVolS + outerVolS;
+  const totalLarge = innerVolL + outerVolL;
+  const totalTruck = innerVolT + outerVolT;
+
   return {
     innerLane: {
       speedKmh: Math.round(avgInnerSpeed * 10) / 10,
@@ -745,6 +768,14 @@ export function extractDirectionalEntranceVdData(
       volumeS: outerVolS,
       volumeL: outerVolL,
       volumeT: outerVolT,
+    },
+    vehicleBreakdown: {
+      small: totalSmall,
+      large: totalLarge,
+      truck: totalTruck,
+      total: totalSmall + totalLarge,
+      smallSpeedKmh: Math.round(avgInnerSpeed),
+      largeSpeedKmh: Math.round(avgOuterSpeed),
     },
     vdCount: matchedVdCount,
     direction,
@@ -1551,6 +1582,7 @@ async function startServer() {
         ...recommendation,
         innerLane: data.innerLane,
         outerLane: data.outerLane,
+        vehicleBreakdown: data.vehicleBreakdown,
         isWeekendPeak,
         cctvCrossValidation,
         matchedVdCount: data.vdCount,
@@ -1564,6 +1596,7 @@ async function startServer() {
         ...recommendation,
         innerLane: data.innerLane,
         outerLane: data.outerLane,
+        vehicleBreakdown: data.vehicleBreakdown,
         isWeekendPeak,
         cctvCrossValidation,
         matchedVdCount: data.vdCount,

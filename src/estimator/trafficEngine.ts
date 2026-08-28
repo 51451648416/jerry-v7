@@ -11,6 +11,7 @@ import {
   NonlinearTrafficState,
   DelayAwareSegmentResult,
   DoubleVerificationState,
+  VehicleBreakdown,
 } from "../types";
 import { parseRawTdxVdPayload } from "./apiParser";
 import { validateDetectorData } from "./dataValidation";
@@ -375,6 +376,13 @@ function isWeekendPeakTime(date: Date = new Date()): boolean {
 function extractVehicleTypesFromRaw(rawApiPayload: any, direction: string) {
   let innerVolS = 0, innerVolL = 0, innerVolT = 0;
   let outerVolS = 0, outerVolL = 0, outerVolT = 0;
+  let innerSpeeds: number[] = [];
+  let outerSpeeds: number[] = [];
+
+  let smallSpeedSum = 0;
+  let smallSpeedCount = 0;
+  let largeSpeedSum = 0;
+  let largeSpeedCount = 0;
   
   const rawList: any[] = Array.isArray(rawApiPayload?.VDLives)
     ? rawApiPayload.VDLives
@@ -405,14 +413,20 @@ function extractVehicleTypesFromRaw(rawApiPayload: any, direction: string) {
     
     if (!isInEntranceBounds && mileageKm > 0) continue;
     
-    const lanes =
-      (Array.isArray(item.LinkFlows) && item.LinkFlows[0] && Array.isArray(item.LinkFlows[0].Lanes)
-        ? item.LinkFlows[0].Lanes
-        : Array.isArray(item.Lanes)
-        ? item.Lanes
-        : Array.isArray(item.lanes)
-        ? item.lanes
-        : []) as any[];
+    const linkFlows = Array.isArray(item.LinkFlows) ? item.LinkFlows : [];
+    const lanes: any[] = [];
+
+    if (linkFlows.length > 0) {
+      for (const lf of linkFlows) {
+        if (Array.isArray(lf?.Lanes)) {
+          lanes.push(...lf.Lanes);
+        }
+      }
+    } else if (Array.isArray(item.Lanes)) {
+      lanes.push(...item.Lanes);
+    } else if (Array.isArray(item.lanes)) {
+      lanes.push(...item.lanes);
+    }
 
     lanes.forEach((laneObj: any, lIdx: number) => {
       let isInner = false;
@@ -423,28 +437,109 @@ function extractVehicleTypesFromRaw(rawApiPayload: any, direction: string) {
         isInner = lIdx === 0;
       }
 
+      let laneSpeed = typeof laneObj.Speed === "number" && laneObj.Speed > 0 ? laneObj.Speed : 0;
       let vS = 0, vL = 0, vT = 0;
-      if (Array.isArray(laneObj.Vehicles)) {
+
+      if (Array.isArray(laneObj.Vehicles) && laneObj.Vehicles.length > 0) {
+        let weightedSpeedSum = 0;
+        let totalVeh = 0;
+
         laneObj.Vehicles.forEach((v: any) => {
           const vol = typeof v.Volume === "number" ? v.Volume : 0;
-          const vType = String(v.VehicleType || "").toUpperCase();
-          if (vType === "S" || vType === "SMALL" || vType === "1" || vType === "CAR") vS += vol;
-          else if (vType === "L" || vType === "LARGE" || vType === "2" || vType === "BUS") vL += vol;
-          else if (vType === "T" || vType === "TRUCK" || vType === "3" || vType === "TRAILER" || vType === "TT") vT += vol;
-          else vS += vol;
+          const spd = typeof v.Speed === "number" && v.Speed > 0 ? v.Speed : 0;
+          const vType = String(v.VehicleType || "").trim().toUpperCase();
+
+          if (vType === "S" || vType === "SMALL" || vType === "1" || vType === "CAR") {
+            vS += vol;
+            if (vol > 0 && spd > 0) {
+              smallSpeedSum += vol * spd;
+              smallSpeedCount += vol;
+            }
+          } else if (vType === "L" || vType === "LARGE" || vType === "2" || vType === "BUS") {
+            vL += vol;
+            if (vol > 0 && spd > 0) {
+              largeSpeedSum += vol * spd;
+              largeSpeedCount += vol;
+            }
+          } else if (vType === "T" || vType === "TRUCK" || vType === "3" || vType === "TRAILER" || vType === "TT") {
+            vT += vol;
+          } else {
+            vS += vol;
+            if (vol > 0 && spd > 0) {
+              smallSpeedSum += vol * spd;
+              smallSpeedCount += vol;
+            }
+          }
+
+          if (vol > 0 && spd > 0) {
+            weightedSpeedSum += vol * spd;
+            totalVeh += vol;
+          }
         });
+
+        if (laneSpeed <= 0 && totalVeh > 0) {
+          laneSpeed = Math.round(weightedSpeedSum / totalVeh);
+        }
       } else if (typeof laneObj.Volume === "number") {
         vS = laneObj.Volume;
       }
 
       if (isInner) {
-        innerVolS += vS; innerVolL += vL; innerVolT += vT;
+        if (laneSpeed > 0) innerSpeeds.push(laneSpeed);
+        innerVolS += vS;
+        innerVolL += vL;
+        innerVolT += vT;
       } else {
-        outerVolS += vS; outerVolL += vL; outerVolT += vT;
+        if (laneSpeed > 0) outerSpeeds.push(laneSpeed);
+        outerVolS += vS;
+        outerVolL += vL;
+        outerVolT += vT;
       }
     });
   }
-  return { innerVolS, innerVolL, innerVolT, outerVolS, outerVolL, outerVolT };
+
+  const avgInnerSpeed = innerSpeeds.length > 0 ? Math.round((innerSpeeds.reduce((a, b) => a + b, 0) / innerSpeeds.length) * 10) / 10 : (direction === "S" ? 76 : 75);
+  const avgOuterSpeed = outerSpeeds.length > 0 ? Math.round((outerSpeeds.reduce((a, b) => a + b, 0) / outerSpeeds.length) * 10) / 10 : (direction === "S" ? 74 : 72);
+
+  const totalSmall = innerVolS + outerVolS;
+  const totalLarge = innerVolL + outerVolL;
+  const totalTruck = innerVolT + outerVolT;
+
+  const smallSpeedKmh = smallSpeedCount > 0 ? Math.round(smallSpeedSum / smallSpeedCount) : Math.round(avgInnerSpeed);
+  const largeSpeedKmh = largeSpeedCount > 0 ? Math.round(largeSpeedSum / largeSpeedCount) : Math.round(avgOuterSpeed);
+
+  const vehicleBreakdown: VehicleBreakdown = {
+    small: totalSmall,
+    large: totalLarge,
+    truck: totalTruck,
+    total: totalSmall + totalLarge,
+    smallSpeedKmh,
+    largeSpeedKmh,
+    innerLane: {
+      speedKmh: avgInnerSpeed,
+      volumeS: innerVolS,
+      volumeL: innerVolL,
+      volumeT: innerVolT,
+      total: innerVolS + innerVolL + innerVolT,
+    },
+    outerLane: {
+      speedKmh: avgOuterSpeed,
+      volumeS: outerVolS,
+      volumeL: outerVolL,
+      volumeT: outerVolT,
+      total: outerVolS + outerVolL + outerVolT,
+    },
+  };
+
+  return {
+    innerVolS,
+    innerVolL,
+    innerVolT,
+    outerVolS,
+    outerVolL,
+    outerVolT,
+    vehicleBreakdown,
+  };
 }
 
 // ----------------------------------------------------
@@ -1095,6 +1190,7 @@ export function runVdTrafficEstimator(
   estimated_state.corridorState = corridorState;
   estimated_state.departureRecommendation = departureRecommendation;
   estimated_state.cctvCrossValidation = cctvCrossValidation;
+  estimated_state.vehicleBreakdown = vehStats.vehicleBreakdown;
 
   // Step 5.6: Compute Ramp Metering & Mainline 30.5K Pulse System
   const comprehensiveMeteringState = evaluateFreeway5MeteringSystem(

@@ -123,7 +123,7 @@ export default function VehicleLaneAlgorithmInspector({
     return () => clearInterval(interval);
   }, [currentDirection]);
 
-  // 從 estimatorOutput 或即時 API 取得演算法數據
+  // 從 estimatorOutput 或即時 API 取得演算法與車種解析數據
   const hasEstOutput = Boolean(estimatorOutput?.estimated_state?.laneComparison);
   const modelInnerSpeed = estimatorOutput?.estimated_state?.laneComparison?.lane1?.equivalentTravelSpeedKmh;
   const modelOuterFinalSpeed = estimatorOutput?.estimated_state?.laneComparison?.lane2?.equivalentTravelSpeedKmh;
@@ -131,18 +131,30 @@ export default function VehicleLaneAlgorithmInspector({
 
   const currentCctvState = modelCctvCross || cctvData || liveData?.cctvCrossValidation;
 
-  const innerLane = liveData?.innerLane || {
+  const estBreakdown = estimatorOutput?.estimated_state?.vehicleBreakdown;
+  const liveBreakdown = liveData?.vehicleBreakdown;
+
+  const innerLane = liveData?.innerLane || estBreakdown?.innerLane || {
     speedKmh: modelInnerSpeed || 75,
     volumeS: 85,
     volumeL: 4,
     volumeT: 1,
   };
 
-  const outerLane = liveData?.outerLane || {
+  const outerLane = liveData?.outerLane || estBreakdown?.outerLane || {
     speedKmh: modelOuterFinalSpeed || 72,
     volumeS: 78,
     volumeL: 12,
     volumeT: 6,
+  };
+
+  const activeBreakdown = liveBreakdown || estBreakdown || {
+    small: (innerLane.volumeS || 0) + (outerLane.volumeS || 0),
+    large: (innerLane.volumeL || 0) + (outerLane.volumeL || 0),
+    truck: (innerLane.volumeT || 0) + (outerLane.volumeT || 0),
+    total: (innerLane.volumeS || 0) + (outerLane.volumeS || 0) + (innerLane.volumeL || 0) + (outerLane.volumeL || 0),
+    smallSpeedKmh: Math.round(innerLane.speedKmh || 75),
+    largeSpeedKmh: Math.round(outerLane.speedKmh || 72),
   };
 
   const totalInnerVol = (innerLane.volumeS || 0) + (innerLane.volumeL || 0) + (innerLane.volumeT || 0);
@@ -371,6 +383,78 @@ export default function VehicleLaneAlgorithmInspector({
 
       {/* 4. 雪山隧道全線 8 節點多鏡頭循環巡檢矩陣 (Full-Line Multi-Camera Inspection Matrix) */}
       <CctvMultiCameraInspector currentDirection={currentDirection} />
+
+      {/* 4.5 車輛種類偵測數據 (TDX LinkFlows Vehicles 即時解析) */}
+      <div className="p-4 rounded-2xl bg-slate-950 border border-slate-800 space-y-3">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="flex items-center gap-2">
+            <span className="p-1 rounded-lg bg-indigo-950 text-indigo-300 border border-indigo-700 text-xs flex items-center gap-1 font-bold">
+              <Layers className="h-3.5 w-3.5 text-indigo-400" />
+              <span>車輛種類偵測即時數據 (TDX VD LinkFlows Vehicles)</span>
+            </span>
+            <span className="text-xs font-mono text-slate-400">
+              過車總量: <strong className="text-white font-bold">{activeBreakdown.total ?? (activeBreakdown.small + activeBreakdown.large)}</strong> 輛
+            </span>
+          </div>
+          <span className="text-[11px] font-mono text-emerald-400 bg-emerald-950/80 px-2 py-0.5 rounded border border-emerald-800">
+            動態即時更新
+          </span>
+        </div>
+
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 text-center">
+          <div className="p-3 rounded-xl bg-slate-900 border border-slate-800">
+            <div className="flex items-center justify-center gap-1 text-[11px] text-slate-400">
+              <Car className="h-3.5 w-3.5 text-sky-400" />
+              <span>小型車 (S) 流量</span>
+            </div>
+            <div className="text-xl font-bold font-mono text-white mt-1">
+              {activeBreakdown.small ?? 0}
+            </div>
+            <div className="text-[11px] font-mono text-sky-400 mt-0.5">
+              均速: {activeBreakdown.smallSpeedKmh ?? 75} km/h
+            </div>
+          </div>
+
+          <div className="p-3 rounded-xl bg-slate-900 border border-slate-800">
+            <div className="flex items-center justify-center gap-1 text-[11px] text-slate-400">
+              <Bus className="h-3.5 w-3.5 text-amber-400" />
+              <span>大客車 (L) 流量</span>
+            </div>
+            <div className="text-xl font-bold font-mono text-amber-300 mt-1">
+              {activeBreakdown.large ?? 0}
+            </div>
+            <div className="text-[11px] font-mono text-amber-400 mt-0.5">
+              均速: {activeBreakdown.largeSpeedKmh ?? 72} km/h
+            </div>
+          </div>
+
+          <div className="p-3 rounded-xl bg-slate-900 border border-slate-800">
+            <div className="flex items-center justify-center gap-1 text-[11px] text-slate-400">
+              <Truck className="h-3.5 w-3.5 text-rose-400" />
+              <span>大貨車 (T) 流量</span>
+            </div>
+            <div className="text-xl font-bold font-mono text-rose-300 mt-1">
+              {activeBreakdown.truck ?? 0}
+            </div>
+            <div className="text-[11px] font-mono text-rose-400 mt-0.5">
+              佔外側 {((truckRatio) * 100).toFixed(1)}%
+            </div>
+          </div>
+
+          <div className="p-3 rounded-xl bg-slate-900 border border-slate-800">
+            <div className="flex items-center justify-center gap-1 text-[11px] text-slate-400">
+              <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400" />
+              <span>車種統計總計 (Total)</span>
+            </div>
+            <div className="text-xl font-bold font-mono text-emerald-400 mt-1">
+              {activeBreakdown.total ?? (activeBreakdown.small + activeBreakdown.large)}
+            </div>
+            <div className="text-[11px] font-mono text-slate-400 mt-0.5">
+              S: {activeBreakdown.small ?? 0} / L: {activeBreakdown.large ?? 0}
+            </div>
+          </div>
+        </div>
+      </div>
 
       {/* 5. 車種流量辨識與分流統計 (Small Car / Bus / Truck) */}
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
