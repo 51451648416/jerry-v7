@@ -259,7 +259,7 @@ export default async function handler(req: any, res: any) {
       status: "OK",
     };
 
-    // 3. 寫入 Redis Key hsuehshan:tdx:traffic_realtime (TTL: 90 秒)
+    // 3. 寫入 Redis Key hsuehshan:tdx:traffic_realtime (TTL: 90 秒，涵蓋 60 秒排程並提供 30 秒容錯)
     if (redis) {
       try {
         await redis.set("hsuehshan:tdx:traffic_realtime", JSON.stringify(payload), { ex: 90 });

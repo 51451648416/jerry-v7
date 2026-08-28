@@ -114,6 +114,27 @@ export const HSUEHSHAN_NODES = [
   },
 ];
 
+/**
+ * 判斷當前台灣時間 (UTC+8 / Asia/Taipei) 是否落在深夜省電休眠時段 (01:00 ~ 04:30)
+ */
+function isTaiwanNightSleepMode(): boolean {
+  const now = new Date();
+  // 使用 Intl 取得 Asia/Taipei 的小時與分鐘
+  const formatter = new Intl.DateTimeFormat("en-US", {
+    timeZone: "Asia/Taipei",
+    hour12: false,
+    hour: "numeric",
+    minute: "numeric",
+  });
+  const parts = formatter.formatToParts(now);
+  const hour = parseInt(parts.find((p) => p.type === "hour")?.value || "0", 10);
+  const minute = parseInt(parts.find((p) => p.type === "minute")?.value || "0", 10);
+
+  const totalMinutes = hour * 60 + minute;
+  // 01:00 = 60 分鐘, 04:30 = 270 分鐘
+  return totalMinutes >= 60 && totalMinutes < 270;
+}
+
 // 高速抓取單幀 CCTV 畫面 (3 秒超時，取得首張完整 JPEG 即刻中斷串流)
 async function fetchFastCctvSnapshot(candidateUrls: string[]): Promise<Buffer> {
   let lastErr: any = null;
@@ -192,16 +213,10 @@ export default async function handler(req: any, res: any) {
   const startMs = Date.now();
 
   try {
-    // 1. 初始化 Redis 與 Gemini API
+    // 1. 初始化 Redis
     const redisUrl = process.env.UPSTASH_REDIS_REST_URL;
     const redisToken = process.env.UPSTASH_REDIS_REST_TOKEN;
     const redis = redisUrl && redisToken ? new Redis({ url: redisUrl, token: redisToken }) : null;
-
-    const apiKey = process.env.GEMINI_API_KEY;
-    if (!apiKey) {
-      throw new Error("GEMINI_API_KEY 環境變數未配置，無法執行真實多模態分析");
-    }
-    const ai = new GoogleGenAI({ apiKey });
 
     // 2. 從 Redis 讀取當前待巡檢鏡頭索引 (hsuehshan:cctv:next_cam_index)
     let currentCamIndex = 0;
@@ -215,6 +230,91 @@ export default async function handler(req: any, res: any) {
     }
 
     const targetNode = HSUEHSHAN_NODES[currentCamIndex];
+
+    // ==========================================
+    // 🌙 深夜省電休眠機制 (Night Sleep Mode)
+    // 台灣時間 01:00 ~ 04:30 嚴禁呼叫 Gemini API
+    // ==========================================
+    if (isTaiwanNightSleepMode()) {
+      const now = Date.now();
+      const nightRecord = {
+        cameraId: targetNode.id,
+        cameraTitle: targetNode.title,
+        locationName: targetNode.locationName,
+        mileageKm: targetNode.mileage,
+        direction: targetNode.direction,
+        segmentType: targetNode.segmentType,
+        segmentName: targetNode.segmentName,
+        hasAbnormalGap: false,
+        gapLane: 0,
+        confidence: 1.0,
+        observationText: "深夜離峰時段（01:00~04:30），隧道全線稀疏順暢，系統處於夜間節能休眠模式。",
+        isNightMode: true,
+        analyzedAt: new Date(now).toISOString(),
+        timestamp: new Date(now).toISOString(),
+        modelName: "night-sleep-mode",
+        cacheTtlRemainingSec: 600,
+        isStale: false,
+        status: "NORMAL_FLOW",
+      };
+
+      // 寫入 Redis Key: hsuehshan:cctv:cam:{cameraId} (TTL 600 秒)
+      if (redis) {
+        try {
+          const camKey = `hsuehshan:cctv:cam:${targetNode.id}`;
+          await redis.set(
+            camKey,
+            JSON.stringify({
+              record: nightRecord,
+              cachedAt: now,
+            }),
+            { ex: 600 }
+          );
+
+          // 同步相容寫入方向 cross_validation 快取
+          const dirKey = `hsuehshan:cctv:cross_validation:${targetNode.direction}`;
+          await redis.set(
+            dirKey,
+            JSON.stringify({
+              cctvResult: nightRecord,
+              cachedAt: now,
+            }),
+            { ex: 600 }
+          );
+
+          // 正常推進下一支鏡頭索引
+          const nextIndex = (currentCamIndex + 1) % HSUEHSHAN_NODES.length;
+          await redis.set("hsuehshan:cctv:next_cam_index", nextIndex, { ex: 86400 });
+        } catch (rErr) {
+          console.error("[CCTV Step] 夜間模式寫入 Redis 異常:", rErr);
+        }
+      }
+
+      const elapsed = Date.now() - startMs;
+      return res.status(200).json({
+        success: true,
+        isNightMode: true,
+        inspectedCamera: {
+          index: currentCamIndex,
+          id: targetNode.id,
+          title: targetNode.title,
+          direction: targetNode.direction,
+        },
+        nextCameraIndex: (currentCamIndex + 1) % HSUEHSHAN_NODES.length,
+        record: nightRecord,
+        durationMs: elapsed,
+        message: `[夜間休眠] 鏡頭 ${targetNode.title} 處於深夜省電時段，跳過 AI 視覺運算並完成狀態快取 (耗時 ${elapsed}ms)`,
+      });
+    }
+
+    // ==========================================
+    // ☀️ 日常時段 (04:30 ~ 次日 01:00) 正常視覺辨識
+    // ==========================================
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (!apiKey) {
+      throw new Error("GEMINI_API_KEY 環境變數未配置，無法執行真實多模態分析");
+    }
+    const ai = new GoogleGenAI({ apiKey });
 
     // 3. 抓取鏡頭畫面
     const imageBuffer = await fetchFastCctvSnapshot(targetNode.urls);
@@ -296,14 +396,16 @@ export default async function handler(req: any, res: any) {
         (parsed.hasAbnormalGap
           ? `雲端視覺辨識偵測到第 ${parsed.gapLane === 1 ? "1 (內側)" : "2 (外側)"} 車道前方出現顯著空間淨空隊列`
           : "車道幾何空間分佈均勻正常，各車道無異常帶頭壓速淨空。"),
+      isNightMode: false,
       analyzedAt: new Date(now).toISOString(),
+      timestamp: new Date(now).toISOString(),
       modelName: usedModel,
-      cacheTtlRemainingSec: 360,
+      cacheTtlRemainingSec: 600,
       isStale: false,
       status: parsed.hasAbnormalGap ? "TURTLE_DETECTED" : "NORMAL_FLOW",
     };
 
-    // 5. 將真實分析結果寫入 Redis Key: hsuehshan:cctv:cam:{cameraId} (TTL 360 秒)
+    // 5. 將真實分析結果寫入 Redis Key: hsuehshan:cctv:cam:{cameraId} (TTL 600 秒)
     if (redis) {
       try {
         const camKey = `hsuehshan:cctv:cam:${targetNode.id}`;
@@ -313,7 +415,7 @@ export default async function handler(req: any, res: any) {
             record,
             cachedAt: now,
           }),
-          { ex: 360 }
+          { ex: 600 }
         );
 
         // 同步相容寫入方向 cross_validation 快取
@@ -324,7 +426,7 @@ export default async function handler(req: any, res: any) {
             cctvResult: record,
             cachedAt: now,
           }),
-          { ex: 360 }
+          { ex: 600 }
         );
 
         // 6. 推進至下一支鏡頭索引
@@ -338,6 +440,7 @@ export default async function handler(req: any, res: any) {
     const elapsed = Date.now() - startMs;
     return res.status(200).json({
       success: true,
+      isNightMode: false,
       inspectedCamera: {
         index: currentCamIndex,
         id: targetNode.id,
