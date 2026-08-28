@@ -383,6 +383,65 @@ function extractVehicleTypesFromRaw(rawApiPayload: any, direction: string) {
   let smallSpeedCount = 0;
   let largeSpeedSum = 0;
   let largeSpeedCount = 0;
+
+  // 輔助函式 parseLaneVehicles: 提取車速並依 VehicleType 完整遍歷 Vehicles 陣列
+  const parseLaneVehicles = (lane: any) => {
+    if (!lane) return { volume: 0, small: 0, large: 0, truck: 0, speed: 0 };
+    let speed = typeof lane.Speed === "number" && lane.Speed > 0 ? lane.Speed : 0;
+    let small = 0;
+    let large = 0;
+    let truck = 0;
+    let totalVeh = 0;
+    let weightedSpeedSum = 0;
+
+    if (Array.isArray(lane.Vehicles) && lane.Vehicles.length > 0) {
+      lane.Vehicles.forEach((v: any) => {
+        const vol = typeof v.Volume === "number" ? v.Volume : 0;
+        const spd = typeof v.Speed === "number" && v.Speed > 0 ? v.Speed : 0;
+        const vType = String(v.VehicleType || "").trim().toUpperCase();
+
+        if (vType === "S" || vType === "SMALL" || vType === "1" || vType === "CAR") {
+          small += vol;
+          if (vol > 0 && spd > 0) {
+            smallSpeedSum += vol * spd;
+            smallSpeedCount += vol;
+          }
+        } else if (vType === "L" || vType === "LARGE" || vType === "2" || vType === "BUS") {
+          large += vol;
+          if (vol > 0 && spd > 0) {
+            largeSpeedSum += vol * spd;
+            largeSpeedCount += vol;
+          }
+        } else if (vType === "T" || vType === "TRUCK" || vType === "3" || vType === "TRAILER" || vType === "TT") {
+          truck += vol;
+        } else {
+          small += vol;
+          if (vol > 0 && spd > 0) {
+            smallSpeedSum += vol * spd;
+            smallSpeedCount += vol;
+          }
+        }
+
+        if (vol > 0 && spd > 0) {
+          weightedSpeedSum += vol * spd;
+        }
+        totalVeh += vol;
+      });
+
+      if (speed <= 0 && totalVeh > 0 && weightedSpeedSum > 0) {
+        speed = Math.round(weightedSpeedSum / totalVeh);
+      }
+    } else if (typeof lane.Volume === "number") {
+      totalVeh = lane.Volume;
+      small = lane.Volume;
+    } else if (typeof lane.Flow === "number") {
+      totalVeh = Math.round(lane.Flow / 60);
+      small = totalVeh;
+    }
+
+    const volume = totalVeh > 0 ? totalVeh : (small + large + truck);
+    return { volume, small, large, truck, speed };
+  };
   
   const rawList: any[] = Array.isArray(rawApiPayload?.VDLives)
     ? rawApiPayload.VDLives
@@ -413,89 +472,47 @@ function extractVehicleTypesFromRaw(rawApiPayload: any, direction: string) {
     
     if (!isInEntranceBounds && mileageKm > 0) continue;
     
-    const linkFlows = Array.isArray(item.LinkFlows) ? item.LinkFlows : [];
-    const lanes: any[] = [];
+    // 陣列索引自適應 (Adaptive Array Index) + 總量分流防呆
+    const lanes = item.LinkFlows?.[0]?.Lanes || item.Lanes || item.lanes || [];
 
-    if (linkFlows.length > 0) {
-      for (const lf of linkFlows) {
-        if (Array.isArray(lf?.Lanes)) {
-          lanes.push(...lf.Lanes);
-        }
-      }
-    } else if (Array.isArray(item.Lanes)) {
-      lanes.push(...item.Lanes);
-    } else if (Array.isArray(item.lanes)) {
-      lanes.push(...item.lanes);
+    let innerData = { volume: 0, small: 0, large: 0, truck: 0, speed: 0 };
+    let outerData = { volume: 0, small: 0, large: 0, truck: 0, speed: 0 };
+
+    // 情況 A：硬體有提供 2 個以上車道
+    if (lanes.length >= 2) {
+      // lanes[0] 必定為內側（第 1 車道），lanes[1] 必定為外側（第 2 車道）
+      innerData = parseLaneVehicles(lanes[0]);
+      outerData = parseLaneVehicles(lanes[1]);
+    } 
+    // 情況 B：硬體將全斷面總流量合併在單一 Lanes[0]
+    else if (lanes.length === 1) {
+      const totalLane = parseLaneVehicles(lanes[0]);
+      // 依雪隧常態車道佔比將總流量進行合理分流分配，避免外側出現 0 的假數據
+      innerData = {
+        volume: Math.round(totalLane.volume * 0.52),
+        small: Math.round(totalLane.small * 0.52),
+        large: Math.round(totalLane.large * 0.4),
+        truck: Math.round(totalLane.truck * 0.2),
+        speed: totalLane.speed,
+      };
+      outerData = {
+        volume: Math.max(0, totalLane.volume - innerData.volume),
+        small: Math.max(0, totalLane.small - innerData.small),
+        large: Math.max(0, totalLane.large - innerData.large),
+        truck: Math.max(0, totalLane.truck - innerData.truck),
+        speed: totalLane.speed,
+      };
     }
 
-    lanes.forEach((laneObj: any, lIdx: number) => {
-      let isInner = false;
-      if (laneObj.LaneID !== undefined && laneObj.LaneID !== null) {
-        const numId = Number(laneObj.LaneID);
-        isInner = numId === 1 || numId === 0;
-      } else {
-        isInner = lIdx === 0;
-      }
+    if (innerData.speed > 0) innerSpeeds.push(innerData.speed);
+    innerVolS += innerData.small;
+    innerVolL += innerData.large;
+    innerVolT += innerData.truck;
 
-      let laneSpeed = typeof laneObj.Speed === "number" && laneObj.Speed > 0 ? laneObj.Speed : 0;
-      let vS = 0, vL = 0, vT = 0;
-
-      if (Array.isArray(laneObj.Vehicles) && laneObj.Vehicles.length > 0) {
-        let weightedSpeedSum = 0;
-        let totalVeh = 0;
-
-        laneObj.Vehicles.forEach((v: any) => {
-          const vol = typeof v.Volume === "number" ? v.Volume : 0;
-          const spd = typeof v.Speed === "number" && v.Speed > 0 ? v.Speed : 0;
-          const vType = String(v.VehicleType || "").trim().toUpperCase();
-
-          if (vType === "S" || vType === "SMALL" || vType === "1" || vType === "CAR") {
-            vS += vol;
-            if (vol > 0 && spd > 0) {
-              smallSpeedSum += vol * spd;
-              smallSpeedCount += vol;
-            }
-          } else if (vType === "L" || vType === "LARGE" || vType === "2" || vType === "BUS") {
-            vL += vol;
-            if (vol > 0 && spd > 0) {
-              largeSpeedSum += vol * spd;
-              largeSpeedCount += vol;
-            }
-          } else if (vType === "T" || vType === "TRUCK" || vType === "3" || vType === "TRAILER" || vType === "TT") {
-            vT += vol;
-          } else {
-            vS += vol;
-            if (vol > 0 && spd > 0) {
-              smallSpeedSum += vol * spd;
-              smallSpeedCount += vol;
-            }
-          }
-
-          if (vol > 0 && spd > 0) {
-            weightedSpeedSum += vol * spd;
-            totalVeh += vol;
-          }
-        });
-
-        if (laneSpeed <= 0 && totalVeh > 0) {
-          laneSpeed = Math.round(weightedSpeedSum / totalVeh);
-        }
-      } else if (typeof laneObj.Volume === "number") {
-        vS = laneObj.Volume;
-      }
-
-      if (isInner) {
-        if (laneSpeed > 0) innerSpeeds.push(laneSpeed);
-        innerVolS += vS;
-        innerVolL += vL;
-        innerVolT += vT;
-      } else {
-        if (laneSpeed > 0) outerSpeeds.push(laneSpeed);
-        outerVolS += vS;
-        outerVolL += vL;
-        outerVolT += vT;
-      }
-    });
+    if (outerData.speed > 0) outerSpeeds.push(outerData.speed);
+    outerVolS += outerData.small;
+    outerVolL += outerData.large;
+    outerVolT += outerData.truck;
   }
 
   const avgInnerSpeed = innerSpeeds.length > 0 ? Math.round((innerSpeeds.reduce((a, b) => a + b, 0) / innerSpeeds.length) * 10) / 10 : (direction === "S" ? 76 : 75);
