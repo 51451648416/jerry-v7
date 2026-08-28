@@ -278,7 +278,7 @@ function computeDiscretizedTrajectory(
 
     const { speed, upId, downId } = getInterpolatedSpeed(midKm);
     const originalSegmentSpeed = speed;
-    const finalLaneSpeed = turtleSpeedKmh !== null ? Math.min(originalSegmentSpeed, turtleSpeedKmh) : originalSegmentSpeed;
+    const finalLaneSpeed = originalSegmentSpeed;
     const effectiveSpeed = Math.max(MIN_PHYSICAL_CRAWL_SPEED_KMH, finalLaneSpeed);
     
     // 微元旅行時間 ΔT_i = (Δx_i / v_i) * 3600 (保留 full precision，禁止四捨五入)
@@ -384,21 +384,66 @@ function extractVehicleTypesFromRaw(rawApiPayload: any, direction: string) {
   let largeSpeedSum = 0;
   let largeSpeedCount = 0;
 
-  // 輔助函式 parseLaneVehicles: 提取車速並依 VehicleType 完整遍歷 Vehicles 陣列
+  // 輔助函式 resolveLaneIdentifier: 嚴格依據 LaneID 或車道描述匹配車道編號 (1: 內側, 2: 外側)
+  const resolveLaneIdentifier = (laneObj: any, defaultIndex?: number): 1 | 2 | null => {
+    if (!laneObj) return null;
+
+    const rawLaneId = laneObj.LaneID ?? laneObj.LaneNumber ?? laneObj.laneId ?? laneObj.LaneNo ?? laneObj.laneID;
+    if (rawLaneId !== undefined && rawLaneId !== null && rawLaneId !== "") {
+      const numId = Number(rawLaneId);
+      if (!isNaN(numId)) {
+        if (numId === 1) return 1;
+        if (numId === 2) return 2;
+      }
+      const strId = String(rawLaneId).trim();
+      if (strId === "1") return 1;
+      if (strId === "2") return 2;
+    }
+
+    const desc = String(
+      laneObj.LaneType ||
+      laneObj.LaneDesc ||
+      laneObj.LaneName ||
+      laneObj.Description ||
+      laneObj.laneType ||
+      laneObj.laneDesc ||
+      laneObj.laneName ||
+      ""
+    );
+    if (/內|快|inner|fast/i.test(desc)) return 1;
+    if (/外|慢|outer|slow/i.test(desc)) return 2;
+
+    if (typeof defaultIndex === "number") {
+      if (defaultIndex === 0) return 1;
+      if (defaultIndex === 1) return 2;
+    }
+
+    return null;
+  };
+
+  // 輔助函式 parseLaneVehicles: 提取車速並依 VehicleType 完整遍歷 Vehicles 陣列 (安全 Number 型別轉換)
   const parseLaneVehicles = (lane: any) => {
     if (!lane) return { volume: 0, small: 0, large: 0, truck: 0, speed: 0 };
-    let speed = typeof lane.Speed === "number" && lane.Speed > 0 ? lane.Speed : 0;
+    let speed = Number(lane.Speed ?? lane.speed ?? 0) || 0;
     let small = 0;
     let large = 0;
     let truck = 0;
     let totalVeh = 0;
     let weightedSpeedSum = 0;
 
-    if (Array.isArray(lane.Vehicles) && lane.Vehicles.length > 0) {
-      lane.Vehicles.forEach((v: any) => {
-        const vol = typeof v.Volume === "number" ? v.Volume : 0;
-        const spd = typeof v.Speed === "number" && v.Speed > 0 ? v.Speed : 0;
-        const vType = String(v.VehicleType || "").trim().toUpperCase();
+    const vehList = Array.isArray(lane.Vehicles)
+      ? lane.Vehicles
+      : Array.isArray(lane.vehicles)
+      ? lane.vehicles
+      : Array.isArray(lane.VehiclesFlow)
+      ? lane.VehiclesFlow
+      : null;
+
+    if (vehList && vehList.length > 0) {
+      vehList.forEach((v: any) => {
+        const vol = Number(v.Volume ?? v.volume ?? v.Flow ?? v.flow ?? v.VehiclesCount ?? v.Count ?? v.count ?? 0) || 0;
+        const spd = Number(v.Speed ?? v.speed ?? 0) || 0;
+        const vType = String(v.VehicleType ?? v.vehicleType ?? v.Type ?? v.type ?? "").trim().toUpperCase();
 
         if (vType === "S" || vType === "SMALL" || vType === "1" || vType === "CAR") {
           small += vol;
@@ -431,11 +476,17 @@ function extractVehicleTypesFromRaw(rawApiPayload: any, direction: string) {
       if (speed <= 0 && totalVeh > 0 && weightedSpeedSum > 0) {
         speed = Math.round(weightedSpeedSum / totalVeh);
       }
-    } else if (typeof lane.Volume === "number") {
-      totalVeh = lane.Volume;
-      small = lane.Volume;
-    } else if (typeof lane.Flow === "number") {
-      totalVeh = Math.round(lane.Flow / 60);
+    } else if (lane.Volume !== undefined && lane.Volume !== null) {
+      totalVeh = Number(lane.Volume) || 0;
+      small = totalVeh;
+    } else if (lane.volume !== undefined && lane.volume !== null) {
+      totalVeh = Number(lane.volume) || 0;
+      small = totalVeh;
+    } else if (lane.Flow !== undefined && lane.Flow !== null) {
+      totalVeh = Math.round((Number(lane.Flow) || 0) / 60);
+      small = totalVeh;
+    } else if (lane.flow !== undefined && lane.flow !== null) {
+      totalVeh = Math.round((Number(lane.flow) || 0) / 60);
       small = totalVeh;
     }
 
@@ -472,47 +523,27 @@ function extractVehicleTypesFromRaw(rawApiPayload: any, direction: string) {
     
     if (!isInEntranceBounds && mileageKm > 0) continue;
     
-    // 陣列索引自適應 (Adaptive Array Index) + 總量分流防呆
+    // 嚴格依據 LaneID 映射車道（嚴禁陣列固定索引與跨車道 fallback 拷貝）
     const lanes = item.LinkFlows?.[0]?.Lanes || item.Lanes || item.lanes || [];
 
-    let innerData = { volume: 0, small: 0, large: 0, truck: 0, speed: 0 };
-    let outerData = { volume: 0, small: 0, large: 0, truck: 0, speed: 0 };
+    if (Array.isArray(lanes) && lanes.length > 0) {
+      lanes.forEach((laneObj: any, lIdx: number) => {
+        const laneId = resolveLaneIdentifier(laneObj, lanes.length >= 2 ? lIdx : undefined);
+        const parsed = parseLaneVehicles(laneObj);
 
-    // 情況 A：硬體有提供 2 個以上車道
-    if (lanes.length >= 2) {
-      // lanes[0] 必定為內側（第 1 車道），lanes[1] 必定為外側（第 2 車道）
-      innerData = parseLaneVehicles(lanes[0]);
-      outerData = parseLaneVehicles(lanes[1]);
-    } 
-    // 情況 B：硬體將全斷面總流量合併在單一 Lanes[0]
-    else if (lanes.length === 1) {
-      const totalLane = parseLaneVehicles(lanes[0]);
-      // 依雪隧常態車道佔比將總流量進行合理分流分配，避免外側出現 0 的假數據
-      innerData = {
-        volume: Math.round(totalLane.volume * 0.52),
-        small: Math.round(totalLane.small * 0.52),
-        large: Math.round(totalLane.large * 0.4),
-        truck: Math.round(totalLane.truck * 0.2),
-        speed: totalLane.speed,
-      };
-      outerData = {
-        volume: Math.max(0, totalLane.volume - innerData.volume),
-        small: Math.max(0, totalLane.small - innerData.small),
-        large: Math.max(0, totalLane.large - innerData.large),
-        truck: Math.max(0, totalLane.truck - innerData.truck),
-        speed: totalLane.speed,
-      };
+        if (laneId === 1) {
+          if (parsed.speed > 0) innerSpeeds.push(parsed.speed);
+          innerVolS += parsed.small;
+          innerVolL += parsed.large;
+          innerVolT += parsed.truck;
+        } else if (laneId === 2) {
+          if (parsed.speed > 0) outerSpeeds.push(parsed.speed);
+          outerVolS += parsed.small;
+          outerVolL += parsed.large;
+          outerVolT += parsed.truck;
+        }
+      });
     }
-
-    if (innerData.speed > 0) innerSpeeds.push(innerData.speed);
-    innerVolS += innerData.small;
-    innerVolL += innerData.large;
-    innerVolT += innerData.truck;
-
-    if (outerData.speed > 0) outerSpeeds.push(outerData.speed);
-    outerVolS += outerData.small;
-    outerVolL += outerData.large;
-    outerVolT += outerData.truck;
   }
 
   const avgInnerSpeed = innerSpeeds.length > 0 ? Math.round((innerSpeeds.reduce((a, b) => a + b, 0) / innerSpeeds.length) * 10) / 10 : (direction === "S" ? 76 : 75);
@@ -676,7 +707,12 @@ export function runVdTrafficEstimator(
     let cumTime = 0;
     lane1Trajectory.segments = lane1Trajectory.segments.map((seg: RoadSegmentSlice) => {
       const rawL1Speed = seg.estimatedSegmentSpeedKmh;
-      const finalL1Speed = Math.max(MIN_PHYSICAL_CRAWL_SPEED_KMH, Math.min(rawL1Speed, lane1Turtle.turtleSpeedKmh));
+      const isNearTurtle =
+        Math.abs(seg.startMileageKm - lane1Turtle.mileageKm) <= 1.5 ||
+        Math.abs(seg.endMileageKm - lane1Turtle.mileageKm) <= 1.5;
+      const finalL1Speed = isNearTurtle
+        ? Math.max(MIN_PHYSICAL_CRAWL_SPEED_KMH, Math.min(rawL1Speed, lane1Turtle.turtleSpeedKmh))
+        : rawL1Speed;
       const segTime = (seg.lengthKm / finalL1Speed) * 3600;
       cumTime += segTime;
       return {
@@ -695,7 +731,12 @@ export function runVdTrafficEstimator(
     let cumTime = 0;
     lane2Trajectory.segments = lane2Trajectory.segments.map((seg: RoadSegmentSlice) => {
       const rawL2Speed = seg.estimatedSegmentSpeedKmh;
-      const finalL2Speed = Math.max(MIN_PHYSICAL_CRAWL_SPEED_KMH, Math.min(rawL2Speed, lane2Turtle.turtleSpeedKmh));
+      const isNearTurtle =
+        Math.abs(seg.startMileageKm - lane2Turtle.mileageKm) <= 1.5 ||
+        Math.abs(seg.endMileageKm - lane2Turtle.mileageKm) <= 1.5;
+      const finalL2Speed = isNearTurtle
+        ? Math.max(MIN_PHYSICAL_CRAWL_SPEED_KMH, Math.min(rawL2Speed, lane2Turtle.turtleSpeedKmh))
+        : rawL2Speed;
       const segTime = (seg.lengthKm / finalL2Speed) * 3600;
       cumTime += segTime;
       return {
@@ -865,10 +906,11 @@ export function runVdTrafficEstimator(
   const isWeekendPeak = isWeekendPeakTime();
   let outerSpeedPenalty = 0;
   
-  if (truckRatio > 0.05) {
+  // 確保大車數量為 0 且密度正常時，v_eff 嚴格等於實測流速（折減量 = 0）
+  if (vehStats.outerVolT > 0 && truckRatio > 0.05) {
     outerSpeedPenalty += Math.min(4.5, (truckRatio - 0.05) * 20);
   }
-  if (isWeekendPeak && busRatio > 0.12) {
+  if (isWeekendPeak && vehStats.outerVolL > 0 && busRatio > 0.12) {
     outerSpeedPenalty += 2.0;
   }
   

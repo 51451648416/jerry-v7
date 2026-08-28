@@ -513,15 +513,15 @@ export function calculateAdvancedLaneRecommendation(
   const truckRatio = totalOuterVolume > 0 ? outerLane.volumeT / totalOuterVolume : 0;
   const busRatio = totalOuterVolume > 0 ? outerLane.volumeL / totalOuterVolume : 0;
 
-  // 規則 1：大貨車爬坡壓速阻抗
-  if (truckRatio > 0.05) {
+  // 規則 1：大貨車爬坡壓速阻抗（確保大車數量為 0 且處於暢行區間時，折減量嚴格為 0）
+  if (outerLane.volumeT > 0 && truckRatio > 0.05) {
     const truckPenalty = Math.min(4.5, (truckRatio - 0.05) * 20);
     effectiveOuterSpeed -= truckPenalty;
     outerPenaltyReasons.push(`卡車佔比達 ${(truckRatio * 100).toFixed(1)}% 易受爬坡微幅壓速`);
   }
 
-  // 規則 2：假日大客車專用道交織阻抗
-  if (isWeekendPeak && busRatio > 0.12) {
+  // 規則 2：假日大客車專用道交織阻抗（確保大客車數量為 0 時折減量為 0）
+  if (isWeekendPeak && outerLane.volumeL > 0 && busRatio > 0.12) {
     effectiveOuterSpeed -= 2.0;
     outerPenaltyReasons.push("尖峰客運高頻匯流");
   }
@@ -529,9 +529,10 @@ export function calculateAdvancedLaneRecommendation(
   // 規則 3：雲端後端 CCTV 影像辨識與地面 VD 交叉驗證成立之慢速車阻抗
   if (cctvCrossValidation && cctvCrossValidation.isVerifiedTurtleCar && cctvCrossValidation.affectedLane === 2) {
     const vdSlowSpeed = cctvCrossValidation.speedBoundAppliedKmh || outerLane.speedKmh;
-    // 實測慢速值壓制上限
-    effectiveOuterSpeed = Math.min(effectiveOuterSpeed, vdSlowSpeed);
-    outerPenaltyReasons.push("雲端視覺與地面VD交叉確認外側前方受慢速車壓速隊列影響");
+    if (vdSlowSpeed < effectiveOuterSpeed) {
+      effectiveOuterSpeed = vdSlowSpeed;
+      outerPenaltyReasons.push("雲端視覺與地面VD交叉確認外側前方受慢速車壓速隊列影響");
+    }
   }
 
   effectiveOuterSpeed = Math.max(0, effectiveOuterSpeed);
@@ -565,11 +566,11 @@ export function calculateAdvancedLaneRecommendation(
 let globalLatestLaneRecommendation: Record<"N" | "S", any> = {
   N: {
     recommendedLane: "內側車道",
-    effectiveInnerSpeed: 75.0,
-    effectiveOuterSpeed: 72.0,
-    truckRatio: 0.015,
-    busRatio: 0.04,
-    voiceText: "即將進入雪山隧道（北向頭城端），目前內側實測流速較快，推薦行駛內側車道。",
+    effectiveInnerSpeed: 76.0,
+    effectiveOuterSpeed: 76.0,
+    truckRatio: 0.0,
+    busRatio: 0.0,
+    voiceText: "即將進入雪山隧道（北向頭城端），目前車流順暢，推薦維持安全車距通行。",
     timestamp: new Date().toISOString(),
     cctvCrossValidation: null,
     direction: "N",
@@ -577,10 +578,10 @@ let globalLatestLaneRecommendation: Record<"N" | "S", any> = {
   S: {
     recommendedLane: "內側車道",
     effectiveInnerSpeed: 76.0,
-    effectiveOuterSpeed: 74.0,
-    truckRatio: 0.012,
-    busRatio: 0.03,
-    voiceText: "即將進入雪山隧道（南向坪林端），目前內側實測流速較快，推薦行駛內側車道。",
+    effectiveOuterSpeed: 76.0,
+    truckRatio: 0.0,
+    busRatio: 0.0,
+    voiceText: "即將進入雪山隧道（南向坪林端），目前車流順暢，推薦維持安全車距通行。",
     timestamp: new Date().toISOString(),
     cctvCrossValidation: null,
     direction: "S",
@@ -623,21 +624,66 @@ export function extractDirectionalEntranceVdData(
   let outerVolT = 0;
   let matchedVdCount = 0;
 
-  // 輔助函式 parseLaneVehicles: 提取車速並完整遍歷 lane.Vehicles 陣列依 VehicleType 累加
+  // 輔助函式 resolveLaneIdentifier: 嚴格依據 LaneID 或車道描述匹配車道編號 (1: 內側, 2: 外側)
+  const resolveLaneIdentifier = (laneObj: any, defaultIndex?: number): 1 | 2 | null => {
+    if (!laneObj) return null;
+
+    const rawLaneId = laneObj.LaneID ?? laneObj.LaneNumber ?? laneObj.laneId ?? laneObj.LaneNo ?? laneObj.laneID;
+    if (rawLaneId !== undefined && rawLaneId !== null && rawLaneId !== "") {
+      const numId = Number(rawLaneId);
+      if (!isNaN(numId)) {
+        if (numId === 1) return 1;
+        if (numId === 2) return 2;
+      }
+      const strId = String(rawLaneId).trim();
+      if (strId === "1") return 1;
+      if (strId === "2") return 2;
+    }
+
+    const desc = String(
+      laneObj.LaneType ||
+      laneObj.LaneDesc ||
+      laneObj.LaneName ||
+      laneObj.Description ||
+      laneObj.laneType ||
+      laneObj.laneDesc ||
+      laneObj.laneName ||
+      ""
+    );
+    if (/內|快|inner|fast/i.test(desc)) return 1;
+    if (/外|慢|outer|slow/i.test(desc)) return 2;
+
+    if (typeof defaultIndex === "number") {
+      if (defaultIndex === 0) return 1;
+      if (defaultIndex === 1) return 2;
+    }
+
+    return null;
+  };
+
+  // 輔助函式 parseLaneVehicles: 提取車速並完整遍歷 lane.Vehicles 陣列 (安全 Number 型別轉換)
   const parseLaneVehicles = (lane: any) => {
     if (!lane) return { volume: 0, small: 0, large: 0, truck: 0, speed: 0 };
-    let speed = typeof lane.Speed === "number" && lane.Speed > 0 ? lane.Speed : 0;
+    let speed = Number(lane.Speed ?? lane.speed ?? 0) || 0;
     let small = 0;
     let large = 0;
     let truck = 0;
     let totalVeh = 0;
     let weightedSpeedSum = 0;
 
-    if (Array.isArray(lane.Vehicles) && lane.Vehicles.length > 0) {
-      lane.Vehicles.forEach((v: any) => {
-        const vol = typeof v.Volume === "number" ? v.Volume : 0;
-        const spd = typeof v.Speed === "number" && v.Speed > 0 ? v.Speed : 0;
-        const vType = String(v.VehicleType || "").trim().toUpperCase();
+    const vehList = Array.isArray(lane.Vehicles)
+      ? lane.Vehicles
+      : Array.isArray(lane.vehicles)
+      ? lane.vehicles
+      : Array.isArray(lane.VehiclesFlow)
+      ? lane.VehiclesFlow
+      : null;
+
+    if (vehList && vehList.length > 0) {
+      vehList.forEach((v: any) => {
+        const vol = Number(v.Volume ?? v.volume ?? v.Flow ?? v.flow ?? v.VehiclesCount ?? v.Count ?? v.count ?? 0) || 0;
+        const spd = Number(v.Speed ?? v.speed ?? 0) || 0;
+        const vType = String(v.VehicleType ?? v.vehicleType ?? v.Type ?? v.type ?? "").trim().toUpperCase();
 
         if (vType === "S" || vType === "SMALL" || vType === "1" || vType === "CAR") {
           small += vol;
@@ -658,11 +704,17 @@ export function extractDirectionalEntranceVdData(
       if (speed <= 0 && totalVeh > 0 && weightedSpeedSum > 0) {
         speed = Math.round(weightedSpeedSum / totalVeh);
       }
-    } else if (typeof lane.Volume === "number") {
-      totalVeh = lane.Volume;
-      small = lane.Volume;
-    } else if (typeof lane.Flow === "number") {
-      totalVeh = Math.round(lane.Flow / 60);
+    } else if (lane.Volume !== undefined && lane.Volume !== null) {
+      totalVeh = Number(lane.Volume) || 0;
+      small = totalVeh;
+    } else if (lane.volume !== undefined && lane.volume !== null) {
+      totalVeh = Number(lane.volume) || 0;
+      small = totalVeh;
+    } else if (lane.Flow !== undefined && lane.Flow !== null) {
+      totalVeh = Math.round((Number(lane.Flow) || 0) / 60);
+      small = totalVeh;
+    } else if (lane.flow !== undefined && lane.flow !== null) {
+      totalVeh = Math.round((Number(lane.flow) || 0) / 60);
       small = totalVeh;
     }
 
@@ -715,47 +767,27 @@ export function extractDirectionalEntranceVdData(
 
     matchedVdCount++;
 
-    // 陣列索引自適應 (Adaptive Array Index) + 總量分流防呆
+    // 嚴格依據 LaneID 映射車道（嚴禁陣列固定索引與跨車道 fallback 拷貝）
     const lanes = item.LinkFlows?.[0]?.Lanes || item.Lanes || item.lanes || [];
 
-    let innerData = { volume: 0, small: 0, large: 0, truck: 0, speed: 0 };
-    let outerData = { volume: 0, small: 0, large: 0, truck: 0, speed: 0 };
+    if (Array.isArray(lanes) && lanes.length > 0) {
+      lanes.forEach((laneObj: any, lIdx: number) => {
+        const laneId = resolveLaneIdentifier(laneObj, lanes.length >= 2 ? lIdx : undefined);
+        const parsed = parseLaneVehicles(laneObj);
 
-    // 情況 A：硬體有提供 2 個以上車道
-    if (lanes.length >= 2) {
-      // lanes[0] 必定為內側（第 1 車道），lanes[1] 必定為外側（第 2 車道）
-      innerData = parseLaneVehicles(lanes[0]);
-      outerData = parseLaneVehicles(lanes[1]);
-    } 
-    // 情況 B：硬體將全斷面總流量合併在單一 Lanes[0]
-    else if (lanes.length === 1) {
-      const totalLane = parseLaneVehicles(lanes[0]);
-      // 依雪隧常態車道佔比將總流量進行合理分流分配，避免外側出現 0 的假數據
-      innerData = {
-        volume: Math.round(totalLane.volume * 0.52),
-        small: Math.round(totalLane.small * 0.52),
-        large: Math.round(totalLane.large * 0.4),
-        truck: Math.round(totalLane.truck * 0.2),
-        speed: totalLane.speed,
-      };
-      outerData = {
-        volume: Math.max(0, totalLane.volume - innerData.volume),
-        small: Math.max(0, totalLane.small - innerData.small),
-        large: Math.max(0, totalLane.large - innerData.large),
-        truck: Math.max(0, totalLane.truck - innerData.truck),
-        speed: totalLane.speed,
-      };
+        if (laneId === 1) {
+          if (parsed.speed > 0) innerSpeeds.push(parsed.speed);
+          innerVolS += parsed.small;
+          innerVolL += parsed.large;
+          innerVolT += parsed.truck;
+        } else if (laneId === 2) {
+          if (parsed.speed > 0) outerSpeeds.push(parsed.speed);
+          outerVolS += parsed.small;
+          outerVolL += parsed.large;
+          outerVolT += parsed.truck;
+        }
+      });
     }
-
-    if (innerData.speed > 0) innerSpeeds.push(innerData.speed);
-    innerVolS += innerData.small;
-    innerVolL += innerData.large;
-    innerVolT += innerData.truck;
-
-    if (outerData.speed > 0) outerSpeeds.push(outerData.speed);
-    outerVolS += outerData.small;
-    outerVolL += outerData.large;
-    outerVolT += outerData.truck;
   }
 
   const defaultInner = direction === "S" ? 76 : 75;
@@ -1410,14 +1442,31 @@ async function startServer() {
   // Aggregated Read-Only Traffic & CCTV Overview (<50ms from Redis)
   app.get("/api/traffic/overview", handleTrafficOverview);
 
+  let lastSuccessfulVdResponsePayload: any = null;
+  let lastSuccessfulVdTimestamp = 0;
+
   // Unified endpoint for Freeway VD data with Automatic Key Rotation, Failover & Advanced Lane Recommendation
   const handleFreewayVd = async (req: express.Request, res: express.Response) => {
     try {
       const tdxUrl =
         "https://tdx.transportdata.tw/api/basic/v2/Road/Traffic/Live/VD/Freeway?$filter=startswith(VDID,%20%27VD-N5%27)&$format=JSON";
 
-      const result = await globalTdxKeyManager.executeWithFailover<any>(tdxUrl);
-      const rawData = result.data;
+      let rawData: any = null;
+      try {
+        const result = await globalTdxKeyManager.executeWithFailover<any>(tdxUrl);
+        rawData = result.data;
+        if (rawData) {
+          lastSuccessfulVdResponsePayload = rawData;
+          lastSuccessfulVdTimestamp = Date.now();
+        }
+      } catch (tdxErr: any) {
+        if (lastSuccessfulVdResponsePayload && Date.now() - lastSuccessfulVdTimestamp < 600000) {
+          console.warn("TDX API 暫時限流或異常，啟用伺服器端最近有效車流快取");
+          rawData = lastSuccessfulVdResponsePayload;
+        } else {
+          throw tdxErr;
+        }
+      }
       const requestedDirection: "N" | "S" =
         String(req.query.direction || "N").toUpperCase() === "S" ? "S" : "N";
 

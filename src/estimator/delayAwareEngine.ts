@@ -455,7 +455,7 @@ export function estimateDelayAwareNonlinearTrajectory(
 
     // 烏龜車 (路隊長) 排隊波傳遞限制與物理降速
     const originalSegmentSpeed = v_est;
-    const finalLaneSpeed = turtleSpeedKmh !== null ? Math.min(originalSegmentSpeed, turtleSpeedKmh) : originalSegmentSpeed;
+    const finalLaneSpeed = originalSegmentSpeed;
     v_est = Math.max(MIN_PHYSICAL_CRAWL_SPEED_KMH, finalLaneSpeed);
 
     // 交通波傳播延遲時間 (空間傳播時間，非資料傳輸延遲)

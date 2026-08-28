@@ -39,19 +39,13 @@ function getTdxKeyPool(): TdxKeyConfig[] {
     pool.push({ id: "set-3", clientId: id3.trim(), clientSecret: sec3.trim(), label: "金鑰組 #3 (輪替)" });
   }
 
-  // 備援預設金鑰池 (若環境變數未填滿 3 組)
+  // 備援預設金鑰池 (若環境變數未填滿)
   const builtInBackup: TdxKeyConfig[] = [
     {
       id: "builtin-1",
       clientId: "lovefiy0903-f8d75808-3306-4327",
       clientSecret: "3b2a8558-8fb3-43ec-ada7-14f59e3476b4",
-      label: "系統內建金鑰 #1",
-    },
-    {
-      id: "builtin-2",
-      clientId: "jerry0903-d82c8d89-56b2-4628",
-      clientSecret: "5fdae95b-b2d6-4b80-a153-2238d6e74db5",
-      label: "系統內建金鑰 #2",
+      label: "系統主要金鑰",
     },
   ];
 

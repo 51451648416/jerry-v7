@@ -211,37 +211,98 @@ export async function fetchDirectTdxToken(
   };
 }
 
+export const STORAGE_KEY_LAST_VALID_VD = "HSUEHSHAN_LAST_VALID_VD_DATA";
+
 /**
- * 抓取國道 5 號即時車流 VD 數據 (優先純讀後端 Redis 快取，完全阻斷前端打 TDX)
+ * 抓取國道 5 號即時車流 VD 數據 (多層級防護：1. Redis 快取 -> 2. 後端 Node 代理 -> 3. 官方直連輪替 -> 4. 本地應急快取)
  */
 export async function fetchDirectFreewayVd(customUrl?: string): Promise<any> {
-  // 1. 若無自訂 URL，優先嘗試從後端 Redis 快取中純讀取 (響應時間 < 50ms)
+  // 1. 優先嘗試從後端 Redis 快取中純讀取 (響應時間 < 50ms)
   if (!customUrl) {
     try {
       const overview = await fetchTrafficOverviewFromCache();
       if (overview && overview.vdData) {
+        if (typeof window !== "undefined" && window.localStorage) {
+          try {
+            localStorage.setItem(STORAGE_KEY_LAST_VALID_VD, JSON.stringify(overview.vdData));
+          } catch {}
+        }
         return overview.vdData;
       }
-      
-      // 若後端 Redis 目前為空，非同步觸發一次後端同步
-      fetch("/api/tdx/sync", { method: "POST" }).catch(() => {});
     } catch {}
   }
 
-  // 2. 備援直連機制：若後端不可達或使用者指定自訂 URL
-  const targetUrl = customUrl && customUrl.trim() ? customUrl.trim() : TDX_OFFICIAL_FREEWAY_VD_URL;
-  const result = await globalTdxKeyManager.executeWithFailover<any>(targetUrl, {
-    method: "GET",
-    headers: {
-      Accept: "application/json",
-    },
-  });
+  // 2. 次優先：向本地後端 Express 代理端點 (/api/tdx/freeway-vd) 請求 (後端具備完整的金鑰池與 Token 快取)
+  if (!customUrl || customUrl.includes("basic/v2/Road/Traffic/Live/VD/Freeway")) {
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 6000);
+      const res = await fetch("/api/tdx/freeway-vd", {
+        headers: { Accept: "application/json" },
+        signal: controller.signal,
+      });
+      clearTimeout(timeoutId);
 
-  return result.data;
+      if (res.ok) {
+        const payload = await res.json();
+        if (payload && (Array.isArray(payload) || payload.VDLives || payload.data)) {
+          const vdData = payload.data || payload;
+          if (typeof window !== "undefined" && window.localStorage) {
+            try {
+              localStorage.setItem(STORAGE_KEY_LAST_VALID_VD, JSON.stringify(vdData));
+            } catch {}
+          }
+          return vdData;
+        }
+      }
+    } catch (backendErr) {
+      // 後端代理短暫異常，繼續嘗試前端直連
+    }
+  }
+
+  // 3. 備援直連機制：透過金鑰輪轉系統向 TDX 官方端點請求
+  const targetUrl = customUrl && customUrl.trim() ? customUrl.trim() : TDX_OFFICIAL_FREEWAY_VD_URL;
+  try {
+    const result = await globalTdxKeyManager.executeWithFailover<any>(targetUrl, {
+      method: "GET",
+      headers: {
+        Accept: "application/json",
+      },
+    });
+
+    if (result.data) {
+      if (typeof window !== "undefined" && window.localStorage) {
+        try {
+          localStorage.setItem(STORAGE_KEY_LAST_VALID_VD, JSON.stringify(result.data));
+        } catch {}
+      }
+      return result.data;
+    }
+  } catch (directErr: any) {
+    console.warn("TDX 即時直連端點暫時異常：", directErr.message);
+
+    // 4. 終極應急保護：若網路或官方 API 暫時限流 (429)，讀取本機快取之最近有效資料
+    if (typeof window !== "undefined" && window.localStorage) {
+      try {
+        const cachedRaw = localStorage.getItem(STORAGE_KEY_LAST_VALID_VD);
+        if (cachedRaw) {
+          const cachedData = JSON.parse(cachedRaw);
+          if (cachedData && (Array.isArray(cachedData) || cachedData.VDLives || cachedData.data)) {
+            console.warn("啟動本機離線應急快取，維持雪隧即時監控圖表正常渲染");
+            return cachedData;
+          }
+        }
+      } catch {}
+    }
+
+    throw directErr;
+  }
+
+  throw new Error("官方 TDX 伺服器目前未回傳雪山隧道車輛偵測器數據");
 }
 
 /**
- * 抓取即時事件通報 (優先純讀後端 Redis 快取，完全阻斷前端打 TDX)
+ * 抓取即時事件通報 (優先純讀後端 Redis 快取，次試後端代理，最後官方直連)
  */
 export async function fetchDirectFreewayLiveEvents(customUrl?: string): Promise<LiveEventAlgorithmResult> {
   // 1. 優先嘗試從後端 Redis 快取中純讀取
@@ -254,7 +315,24 @@ export async function fetchDirectFreewayLiveEvents(customUrl?: string): Promise<
     } catch {}
   }
 
-  // 2. 備援直連機制
+  // 2. 次試後端代理端點
+  if (!customUrl) {
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 4000);
+      const res = await fetch("/api/tdx/freeway-live-events", {
+        headers: { Accept: "application/json" },
+        signal: controller.signal,
+      });
+      clearTimeout(timeoutId);
+      if (res.ok) {
+        const payload = await res.json();
+        if (payload) return parseTdxLiveEventsJson(payload);
+      }
+    } catch {}
+  }
+
+  // 3. 備援直連機制
   const targetUrl = customUrl && customUrl.trim() ? customUrl.trim() : TDX_OFFICIAL_FREEWAY_LIVE_EVENTS_URL;
   try {
     const result = await globalTdxKeyManager.executeWithFailover<TdxLiveEventsRootPayload>(targetUrl, {

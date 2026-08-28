@@ -142,10 +142,10 @@ export default function VehicleLaneAlgorithmInspector({
   };
 
   const outerLane = liveData?.outerLane || estBreakdown?.outerLane || {
-    speedKmh: modelOuterFinalSpeed || 72,
-    volumeS: 78,
-    volumeL: 12,
-    volumeT: 6,
+    speedKmh: modelOuterFinalSpeed || 76,
+    volumeS: 0,
+    volumeL: 0,
+    volumeT: 0,
   };
 
   const activeBreakdown = liveBreakdown || estBreakdown || {
@@ -153,8 +153,8 @@ export default function VehicleLaneAlgorithmInspector({
     large: (innerLane.volumeL || 0) + (outerLane.volumeL || 0),
     truck: (innerLane.volumeT || 0) + (outerLane.volumeT || 0),
     total: (innerLane.volumeS || 0) + (outerLane.volumeS || 0) + (innerLane.volumeL || 0) + (outerLane.volumeL || 0),
-    smallSpeedKmh: Math.round(innerLane.speedKmh || 75),
-    largeSpeedKmh: Math.round(outerLane.speedKmh || 72),
+    smallSpeedKmh: Math.round(innerLane.speedKmh || 76),
+    largeSpeedKmh: Math.round(outerLane.speedKmh || 76),
   };
 
   const totalInnerVol = (innerLane.volumeS || 0) + (innerLane.volumeL || 0) + (innerLane.volumeT || 0);
@@ -164,9 +164,11 @@ export default function VehicleLaneAlgorithmInspector({
   const busRatio = totalOuterVol > 0 ? (outerLane.volumeL || 0) / totalOuterVol : 0;
   const isWeekendPeak = liveData?.isWeekendPeak ?? false;
 
-  // 阻抗扣減計算
-  const truckPenalty = truckRatio > 0.05 ? Math.min(4.5, (truckRatio - 0.05) * 20) : 0;
-  const busPenalty = isWeekendPeak && busRatio > 0.12 ? 2.0 : 0;
+  // 阻抗扣減計算（若無大貨車/大客車且處於自由流暢行區間，折減量嚴格為 0）
+  const hasTrucks = (outerLane.volumeT || 0) > 0;
+  const hasBuses = (outerLane.volumeL || 0) > 0;
+  const truckPenalty = hasTrucks && truckRatio > 0.05 ? Math.min(4.5, (truckRatio - 0.05) * 20) : 0;
+  const busPenalty = isWeekendPeak && hasBuses && busRatio > 0.12 ? 2.0 : 0;
   const totalPenalty = truckPenalty + busPenalty;
 
   // 全域對齊：若有模型全線空間微元流速，優先以頂部主模型流速為最終等效流速，確保上下數據 100% 吻合
@@ -480,7 +482,7 @@ export default function VehicleLaneAlgorithmInspector({
                 {innerLane.volumeS || 0}
               </div>
               <div className="text-[10px] font-mono text-slate-500">
-                {totalInnerVol > 0 && innerLane.volumeS ? (((innerLane.volumeS || 0) / totalInnerVol) * 100).toFixed(0) : "0"}%
+                {totalInnerVol > 0 && innerLane.volumeS ? (((innerLane.volumeS || 0) / totalInnerVol) * 100).toFixed(1) : "0.0"}%
               </div>
             </div>
 
@@ -493,7 +495,7 @@ export default function VehicleLaneAlgorithmInspector({
                 {innerLane.volumeL || 0}
               </div>
               <div className="text-[10px] font-mono text-slate-500">
-                {totalInnerVol > 0 && innerLane.volumeL ? (((innerLane.volumeL || 0) / totalInnerVol) * 100).toFixed(0) : "0"}%
+                {totalInnerVol > 0 && innerLane.volumeL ? (((innerLane.volumeL || 0) / totalInnerVol) * 100).toFixed(1) : "0.0"}%
               </div>
             </div>
 
@@ -506,7 +508,7 @@ export default function VehicleLaneAlgorithmInspector({
                 {innerLane.volumeT || 0}
               </div>
               <div className="text-[10px] font-mono text-slate-500">
-                {totalInnerVol > 0 && innerLane.volumeT ? (((innerLane.volumeT || 0) / totalInnerVol) * 100).toFixed(0) : "0"}%
+                {totalInnerVol > 0 && innerLane.volumeT ? (((innerLane.volumeT || 0) / totalInnerVol) * 100).toFixed(1) : "0.0"}%
               </div>
             </div>
           </div>
@@ -541,7 +543,7 @@ export default function VehicleLaneAlgorithmInspector({
                 {outerLane.volumeS || 0}
               </div>
               <div className="text-[10px] font-mono text-slate-500">
-                {totalOuterVol > 0 && outerLane.volumeS ? (((outerLane.volumeS || 0) / totalOuterVol) * 100).toFixed(0) : "0"}%
+                {totalOuterVol > 0 && outerLane.volumeS ? (((outerLane.volumeS || 0) / totalOuterVol) * 100).toFixed(1) : "0.0"}%
               </div>
             </div>
 

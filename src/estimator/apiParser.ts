@@ -226,6 +226,43 @@ export function parseRawTdxVdPayload(
     // 車道數據提取
     const lanes: RawApiDetectorRecord["lanes"] = [];
 
+    // 輔助函式 resolveLaneIdentifier: 嚴格依據 LaneID 或車道描述匹配車道編號 (1: 內側, 2: 外側)
+    const resolveLaneIdentifier = (laneObj: any, indexFallback?: number): 1 | 2 | null => {
+      if (!laneObj) return null;
+
+      const rawLaneId = laneObj.LaneID ?? laneObj.LaneNumber ?? laneObj.laneId ?? laneObj.LaneNo ?? laneObj.laneID;
+      if (rawLaneId !== undefined && rawLaneId !== null && rawLaneId !== "") {
+        const numId = Number(rawLaneId);
+        if (!isNaN(numId)) {
+          if (numId === 1) return 1;
+          if (numId === 2) return 2;
+        }
+        const strId = String(rawLaneId).trim();
+        if (strId === "1") return 1;
+        if (strId === "2") return 2;
+      }
+
+      const desc = String(
+        laneObj.LaneType ||
+        laneObj.LaneDesc ||
+        laneObj.LaneName ||
+        laneObj.Description ||
+        laneObj.laneType ||
+        laneObj.laneDesc ||
+        laneObj.laneName ||
+        ""
+      );
+      if (/內|快|inner|fast/i.test(desc)) return 1;
+      if (/外|慢|outer|slow/i.test(desc)) return 2;
+
+      if (typeof indexFallback === "number") {
+        if (indexFallback === 0) return 1;
+        if (indexFallback === 1) return 2;
+      }
+
+      return null;
+    };
+
     // 輔助函式 parseLaneVehicles
     const parseLaneVehicles = (laneObj: any) => {
       let totalFlowVehPerHr = 0;
@@ -235,11 +272,19 @@ export function parseRawTdxVdPayload(
       let large = 0;
       let truck = 0;
 
-      if (Array.isArray(laneObj?.Vehicles)) {
-        laneObj.Vehicles.forEach((v: any) => {
-          const vol = typeof v.Volume === "number" ? v.Volume : 0;
-          const spd = typeof v.Speed === "number" ? v.Speed : 0;
-          const vType = String(v.VehicleType || "").trim().toUpperCase();
+      const vehList = Array.isArray(laneObj?.Vehicles)
+        ? laneObj.Vehicles
+        : Array.isArray(laneObj?.vehicles)
+        ? laneObj.vehicles
+        : Array.isArray(laneObj?.VehiclesFlow)
+        ? laneObj.VehiclesFlow
+        : null;
+
+      if (vehList && vehList.length > 0) {
+        vehList.forEach((v: any) => {
+          const vol = Number(v.Volume ?? v.volume ?? v.Flow ?? v.flow ?? v.VehiclesCount ?? v.Count ?? v.count ?? 0) || 0;
+          const spd = Number(v.Speed ?? v.speed ?? 0) || 0;
+          const vType = String(v.VehicleType ?? v.vehicleType ?? v.Type ?? v.type ?? "").trim().toUpperCase();
 
           if (vType === "S" || vType === "SMALL" || vType === "1" || vType === "CAR") {
             small += vol;
@@ -252,22 +297,38 @@ export function parseRawTdxVdPayload(
           }
 
           weightedVolumeSum += vol;
-          weightedSpeedSum += vol * spd;
+          if (spd > 0 && vol > 0) {
+            weightedSpeedSum += vol * spd;
+          }
         });
         totalFlowVehPerHr = weightedVolumeSum * 60;
-      } else if (typeof laneObj?.Flow === "number") {
-        totalFlowVehPerHr = laneObj.Flow;
-        weightedVolumeSum = Math.round(laneObj.Flow / 60);
-      } else if (typeof laneObj?.Volume === "number") {
-        totalFlowVehPerHr = laneObj.Volume * 60;
-        weightedVolumeSum = laneObj.Volume;
+      } else if (laneObj?.Flow !== undefined && laneObj?.Flow !== null) {
+        const flowVal = Number(laneObj.Flow) || 0;
+        totalFlowVehPerHr = flowVal;
+        weightedVolumeSum = Math.round(flowVal / 60);
+        small = weightedVolumeSum;
+      } else if (laneObj?.flow !== undefined && laneObj?.flow !== null) {
+        const flowVal = Number(laneObj.flow) || 0;
+        totalFlowVehPerHr = flowVal;
+        weightedVolumeSum = Math.round(flowVal / 60);
+        small = weightedVolumeSum;
+      } else if (laneObj?.Volume !== undefined && laneObj?.Volume !== null) {
+        const volVal = Number(laneObj.Volume) || 0;
+        totalFlowVehPerHr = volVal * 60;
+        weightedVolumeSum = volVal;
+        small = volVal;
+      } else if (laneObj?.volume !== undefined && laneObj?.volume !== null) {
+        const volVal = Number(laneObj.volume) || 0;
+        totalFlowVehPerHr = volVal * 60;
+        weightedVolumeSum = volVal;
+        small = volVal;
       }
 
-      let rawSpeed = typeof laneObj?.Speed === "number" && laneObj.Speed > 0 ? laneObj.Speed : 0;
-      if (rawSpeed === 0 && weightedVolumeSum > 0 && weightedSpeedSum > 0) {
+      let rawSpeed = Number(laneObj?.Speed ?? laneObj?.speed ?? 0) || 0;
+      if (rawSpeed <= 0 && weightedVolumeSum > 0 && weightedSpeedSum > 0) {
         rawSpeed = Math.round(weightedSpeedSum / weightedVolumeSum);
       }
-      const rawOcc = typeof laneObj?.Occupancy === "number" ? laneObj.Occupancy : 0;
+      const rawOcc = Number(laneObj?.Occupancy ?? laneObj?.occupancy ?? 0) || 0;
 
       return {
         speedKmh: rawSpeed,
@@ -279,56 +340,37 @@ export function parseRawTdxVdPayload(
       };
     };
 
-    // 陣列索引自適應 (Adaptive Array Index) + 總量分流防呆
+    // 嚴格依據 LaneID 映射車道（嚴禁使用陣列固定索引與跨車道 fallback 拷貝）
     const rawLanes = item.LinkFlows?.[0]?.Lanes || item.lanes || item.Lanes || [];
 
-    if (Array.isArray(rawLanes) && rawLanes.length >= 2) {
-      // 情況 A：硬體有提供 2 個以上車道 (lanes[0] 為第 1 車道/內側，lanes[1] 為第 2 車道/外側)
+    if (Array.isArray(rawLanes) && rawLanes.length > 0) {
+      const addedLaneIds = new Set<number>();
       rawLanes.forEach((laneObj: any, lIdx: number) => {
-        const parsed = parseLaneVehicles(laneObj);
-        lanes.push({
-          laneId: lIdx + 1,
-          speedKmh: parsed.speedKmh,
-          flowVehPerHour: parsed.flowVehPerHour,
-          occupancyPercent: parsed.occupancyPercent,
-        });
+        const laneId = resolveLaneIdentifier(laneObj, rawLanes.length >= 2 ? lIdx : undefined);
+        if (laneId === 1 || laneId === 2) {
+          if (!addedLaneIds.has(laneId)) {
+            addedLaneIds.add(laneId);
+            const parsed = parseLaneVehicles(laneObj);
+            lanes.push({
+              laneId,
+              speedKmh: parsed.speedKmh,
+              flowVehPerHour: parsed.flowVehPerHour,
+              occupancyPercent: parsed.occupancyPercent,
+            });
+          }
+        }
       });
-    } else if (Array.isArray(rawLanes) && rawLanes.length === 1) {
-      // 情況 B：硬體將全斷面總流量合併在單一 Lanes[0]
-      const totalLane = parseLaneVehicles(rawLanes[0]);
-      const innerFlow = Math.round(totalLane.flowVehPerHour * 0.52);
-      const outerFlow = Math.max(0, totalLane.flowVehPerHour - innerFlow);
-
-      lanes.push({
-        laneId: 1,
-        speedKmh: totalLane.speedKmh,
-        flowVehPerHour: innerFlow,
-        occupancyPercent: totalLane.occupancyPercent,
-      });
-      lanes.push({
-        laneId: 2,
-        speedKmh: totalLane.speedKmh,
-        flowVehPerHour: outerFlow,
-        occupancyPercent: totalLane.occupancyPercent,
-      });
+      lanes.sort((a, b) => a.laneId - b.laneId);
     } else if (typeof item.Speed === "number" || typeof item.speed === "number") {
-      // Format C: 單一整體測站速度與總流量，自適應拆分為雙車道
-      const spd = typeof item.Speed === "number" ? item.Speed : item.speed;
-      const occ = typeof item.Occupancy === "number" ? item.Occupancy : (item.occupancy || 0);
-      const totalFlw = typeof item.Volume === "number" ? item.Volume * 60 : (item.flow || 0);
-      const innerFlow = Math.round(totalFlw * 0.52);
-      const outerFlow = Math.max(0, totalFlw - innerFlow);
+      // Format C: 單一整體測站速度與總流量（獨立標記為第 1 車道，嚴禁相互拷貝）
+      const spd = Number(item.Speed ?? item.speed) || 0;
+      const occ = Number(item.Occupancy ?? item.occupancy) || 0;
+      const totalFlw = Number(item.Volume !== undefined ? item.Volume * 60 : item.flow) || 0;
 
       lanes.push({
         laneId: 1,
         speedKmh: spd,
-        flowVehPerHour: innerFlow,
-        occupancyPercent: occ,
-      });
-      lanes.push({
-        laneId: 2,
-        speedKmh: spd,
-        flowVehPerHour: outerFlow,
+        flowVehPerHour: totalFlw,
         occupancyPercent: occ,
       });
     }

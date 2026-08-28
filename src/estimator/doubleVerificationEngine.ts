@@ -187,7 +187,7 @@ export function computeAlternativeRobustTrajectory(
 
     segSpeed = Math.max(MIN_PHYSICAL_CRAWL_SPEED_KMH, Math.min(100, segSpeed));
     const originalSegmentSpeed = segSpeed;
-    const finalLaneSpeed = turtleSpeedKmh !== null ? Math.min(originalSegmentSpeed, turtleSpeedKmh) : originalSegmentSpeed;
+    const finalLaneSpeed = originalSegmentSpeed;
     segSpeed = Math.max(MIN_PHYSICAL_CRAWL_SPEED_KMH, finalLaneSpeed);
 
     const segTimeSec = (SLICE_LENGTH_KM / segSpeed) * 3600;
