@@ -75,6 +75,11 @@ export interface CctvVisionAnalysisResult {
   gapLane: 0 | 1 | 2; // 0: None, 1: Inner, 2: Outer
   confidence: number;
   observationText: string;
+  front_clearance_cars?: number;
+  rear_tailgating_cars?: number;
+  brake_lights_active?: boolean;
+  platoon_severity?: "NONE" | "MILD" | "MODERATE" | "SEVERE";
+  micro_bottleneck_score?: number;
   cameraId?: string;
   cameraTitle?: string;
   mileageKm?: number;
@@ -371,28 +376,38 @@ export function crossValidateCctvAndVd(
   let affectedLane: 0 | 1 | 2 = 0;
   let speedBoundApplied: number | undefined = undefined;
 
-  if (cctvResult.hasAbnormalGap && cctvResult.gapLane > 0) {
-    if (cctvResult.gapLane === 2) {
-      // 雲端視覺偵測到外側大淨空 -> 交叉驗證：地面 VD 實測外側是否確實較慢？
-      const isVdOuterSlower = groundVd.outerSpeedKmh < groundVd.innerSpeedKmh - 2 || groundVd.outerSpeedKmh < 65;
+  const isBrakeActive = Boolean(cctvResult.brake_lights_active);
+  const microScore = typeof (cctvResult as any).micro_bottleneck_score === "number" ? (cctvResult as any).micro_bottleneck_score : 0;
+  const isMicroCongested = isBrakeActive || microScore >= 0.65;
+
+  if (isMicroCongested || (cctvResult.hasAbnormalGap && cctvResult.gapLane > 0)) {
+    const targetLane = cctvResult.gapLane === 1 ? 1 : 2;
+    if (targetLane === 2) {
+      // 雲端視覺偵測到外側大淨空或煞車燈群 -> 交叉驗證：地面 VD 實測
+      const isVdOuterSlower =
+        groundVd.outerSpeedKmh < groundVd.innerSpeedKmh - 2 ||
+        groundVd.outerSpeedKmh < 68 ||
+        isMicroCongested;
       if (isVdOuterSlower) {
         status = "ACTIVE_VERIFIED";
         isVerified = true;
         affectedLane = 2;
-        speedBoundApplied = groundVd.outerSpeedKmh; // 100% 採用地面 VD 實測慢速值
+        speedBoundApplied = Math.min(groundVd.outerSpeedKmh > 0 ? groundVd.outerSpeedKmh : 65, 65);
       } else {
-        // 視覺有淨空但地面 VD 流速正常甚至外側更快 -> 排除 AI 誤判，標記為 UNCONFIRMED
         status = "UNCONFIRMED";
         isVerified = false;
       }
-    } else if (cctvResult.gapLane === 1) {
-      // 內側異常淨空
-      const isVdInnerSlower = groundVd.innerSpeedKmh < groundVd.outerSpeedKmh - 2 || groundVd.innerSpeedKmh < 65;
+    } else if (targetLane === 1) {
+      // 內側異常淨空或煞車
+      const isVdInnerSlower =
+        groundVd.innerSpeedKmh < groundVd.outerSpeedKmh - 2 ||
+        groundVd.innerSpeedKmh < 68 ||
+        isMicroCongested;
       if (isVdInnerSlower) {
         status = "ACTIVE_VERIFIED";
         isVerified = true;
         affectedLane = 1;
-        speedBoundApplied = groundVd.innerSpeedKmh;
+        speedBoundApplied = Math.min(groundVd.innerSpeedKmh > 0 ? groundVd.innerSpeedKmh : 65, 65);
       } else {
         status = "UNCONFIRMED";
         isVerified = false;

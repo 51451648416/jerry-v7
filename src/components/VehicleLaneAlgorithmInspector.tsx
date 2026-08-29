@@ -890,19 +890,41 @@ export default function VehicleLaneAlgorithmInspector({
           </div>
 
           {/* 規則 3：雲端視覺與地面 VD 交叉驗證 */}
-          <div className="p-3 rounded-xl bg-slate-900 border border-slate-800 space-y-1.5">
-            <div className="flex items-center justify-between font-bold">
-              <span className="text-slate-200">規則 3：雲端視覺+VD交叉驗證</span>
-              <span className={`px-2 py-0.5 rounded text-[10px] font-mono ${currentCctvState?.isVerifiedTurtleCar ? "bg-rose-950 text-rose-400 border border-rose-800" : "bg-emerald-950 text-emerald-400"}`}>
-                {currentCctvState?.isVerifiedTurtleCar ? "交叉確認成立 (壓制)" : "常態通行 (無大淨空)"}
-              </span>
-            </div>
-            <p className="text-[11px] text-slate-400 leading-relaxed font-mono">
-              {currentCctvState?.isVerifiedTurtleCar
-                ? `流速上限已鎖定為地面 VD 實測值: ${currentCctvState.speedBoundAppliedKmh || outerLane.speedKmh} km/h`
-                : "視覺幾何正常且地面流速平衡，未觸發慢速車壓速防護。"}
-            </p>
-          </div>
+          {(() => {
+            const hasCctvActive =
+              Boolean(currentCctvState?.isVerifiedTurtleCar) ||
+              Boolean(currentCctvState?.cctvResult?.brake_lights_active) ||
+              Boolean(currentCctvState?.cctvResult?.hasAbnormalGap) ||
+              laneDiagnoses.some((d: any) => d.brakeLightsActive || d.dualModeFusionApplied);
+
+            const activeNode = laneDiagnoses.find((d: any) => d.brakeLightsActive || (d.dualModeFusionApplied && d.status !== "NORMAL_BALANCED"));
+
+            return (
+              <div className="p-3 rounded-xl bg-slate-900 border border-slate-800 space-y-1.5">
+                <div className="flex items-center justify-between font-bold">
+                  <span className="text-slate-200">規則 3：雲端視覺+VD交叉驗證</span>
+                  <span className={`px-2 py-0.5 rounded text-[10px] font-mono ${
+                    hasCctvActive
+                      ? "bg-rose-950 text-rose-400 border border-rose-800"
+                      : "bg-emerald-950 text-emerald-400"
+                  }`}>
+                    {hasCctvActive
+                      ? currentCctvState?.cctvResult?.brake_lights_active || activeNode?.brakeLightsActive
+                        ? "雙模態確認：煞車群壓制"
+                        : "雙模態確認：異常淨空壓制"
+                      : "常態通行 (流速均衡)"}
+                  </span>
+                </div>
+                <p className="text-[11px] text-slate-400 leading-relaxed font-mono">
+                  {hasCctvActive
+                    ? currentCctvState?.cctvResult?.observationText ||
+                      activeNode?.description ||
+                      `流速上限已鎖定為實測值: ${currentCctvState?.speedBoundAppliedKmh || activeNode?.suppressedSpeedKmh || outerLane.speedKmh} km/h`
+                    : "視覺空間車距均勻且地面流速平衡，未觸發慢速車/煞車燈群壓速防護。"}
+                </p>
+              </div>
+            );
+          })()}
         </div>
       </div>
     </div>

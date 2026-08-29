@@ -46,10 +46,21 @@ export async function fetchTrafficOverviewFromCache(): Promise<any | null> {
 
     if (res.ok) {
       const data = await res.json();
-      if (data && data.success && data.traffic) {
-        cachedOverviewData = data.traffic;
-        lastOverviewFetchMs = now;
-        return data.traffic;
+      if (data && data.success) {
+        if (data.cctv && typeof data.cctv === "object") {
+          try {
+            const cctvNodes = Object.values(data.cctv).filter(Boolean);
+            if (cctvNodes.length > 0) {
+              localStorage.setItem("hsuehshan_cctv_inspection_nodes", JSON.stringify(cctvNodes));
+              window.dispatchEvent(new CustomEvent("hsuehshan_cctv_updated", { detail: cctvNodes }));
+            }
+          } catch {}
+        }
+        if (data.traffic) {
+          cachedOverviewData = data.traffic;
+          lastOverviewFetchMs = now;
+          return data.traffic;
+        }
       }
     }
   } catch (err) {

@@ -45,6 +45,13 @@ export default function CctvMultiCameraInspector({
       if (data && data.success) {
         setInspectionState(data);
         setLastRefreshedAt(new Date().toLocaleTimeString("zh-TW", { hour12: false }));
+        // 同步寫入全域快取並觸發雙模態交通運算引擎重新融合
+        if (Array.isArray(data.nodes) && data.nodes.length > 0) {
+          try {
+            localStorage.setItem("hsuehshan_cctv_inspection_nodes", JSON.stringify(data.nodes));
+            window.dispatchEvent(new CustomEvent("hsuehshan_cctv_updated", { detail: data.nodes }));
+          } catch {}
+        }
       }
     } catch (err) {
       console.error("Failed to fetch CCTV inspection state:", err);
@@ -67,6 +74,12 @@ export default function CctvMultiCameraInspector({
       if (data && data.success) {
         setInspectionState(data);
         setLastRefreshedAt(new Date().toLocaleTimeString("zh-TW", { hour12: false }));
+        if (Array.isArray(data.nodes) && data.nodes.length > 0) {
+          try {
+            localStorage.setItem("hsuehshan_cctv_inspection_nodes", JSON.stringify(data.nodes));
+            window.dispatchEvent(new CustomEvent("hsuehshan_cctv_updated", { detail: data.nodes }));
+          } catch {}
+        }
       }
     } catch (err) {
       console.error("Failed to trigger CCTV inspection:", err);
@@ -333,6 +346,16 @@ export default function CctvMultiCameraInspector({
                       <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-xs font-semibold bg-amber-500/20 text-amber-300 border border-amber-500/30">
                         <AlertTriangle className="w-3 h-3 text-amber-400" />
                         偵測車道異常淨空
+                      </span>
+                    ) : (node as any).brake_lights_active ? (
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-xs font-semibold bg-rose-500/20 text-rose-300 border border-rose-500/30">
+                        <AlertTriangle className="w-3 h-3 text-rose-400 animate-pulse" />
+                        煞車燈群亮起
+                      </span>
+                    ) : ((node as any).micro_bottleneck_score ?? 0) >= 0.65 ? (
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-xs font-semibold bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                        <AlertTriangle className="w-3 h-3 text-amber-400" />
+                        微觀車隊緊縮
                       </span>
                     ) : (
                       <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-xs font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">

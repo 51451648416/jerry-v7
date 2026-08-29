@@ -304,53 +304,93 @@ export function diagnoseLaneStatus(
   // 雙模態融合決策層 (Dual-Mode Fusion: Ground VD Telemetry ⊗ CCTV Micro Geometry)
   // =========================================================================
 
-  // 【規則一：提前預警補償 (Early Warning Pre-Trip Compensation)】
-  // 當 VD 時速看似仍在 74~78 km/h (尚未全面崩潰)，但 AI 視覺輸出 outer_lane.micro_bottleneck_score >= 0.75 且 brake_lights_active === true
-  // ➜ 提前將該節點外側車道判定為「微觀受阻」，節點強制獨立變色為【琥珀橘色 (#f59e0b)】
-  const isEarlyWarningTriggered =
-    v2 >= 73.0 &&
-    v2 <= 80.0 &&
-    microScore >= 0.75 &&
-    brakeActive === true &&
-    (cctvGapLane === 2 || cctvGapLane === 0);
+  // 【規則一：提前預警與煞車燈群鎖定 (Early Warning & Brake Light Cluster)】
+  // 當 AI 視覺偵測到煞車燈群亮起 (brake_lights_active === true) 或微觀壓制指數 >= 0.65 或 (前淨空>=3.5 且 後緊隨>=2)
+  // ➜ 提早鎖定該車道為「微觀受阻」，節點變色為琥珀橘/玫瑰紅，並將流速上限壓低納入微元旅行時間積分
+  const isBrakeLightOrMicroBottleneck =
+    brakeActive === true ||
+    microScore >= 0.65 ||
+    (frontClearance >= 3.5 && rearTailgating >= 2);
 
-  if (isEarlyWarningTriggered) {
-    const fusionTag = `🐢 AI視覺微觀鎖定：外側前淨空 ${frontClearance.toFixed(1)} 車身 / 後方 ${rearTailgating} 車緊貼煞車 / 預警指數 ${microScore.toFixed(2)}`;
-    return {
-      vdId,
-      mileageKm,
-      innerSpeedKmh: v1,
-      outerSpeedKmh: v2,
-      innerFlowVehPerHour: flow1,
-      outerFlowVehPerHour: flow2,
-      speedDeltaKmh: v1 - v2,
-      status: "OUTER_SLOW_HEAVY_SUPPRESSION",
-      statusLabel: "⚠️ 外側微觀受阻 (AI提前預警)",
-      description: `【雙模態提前預警】VD 實測時速 ${v2.toFixed(0)} km/h 尚未崩潰，但 AI 視覺檢測到外側前淨空 ${frontClearance.toFixed(1)} 車身、後方 ${rearTailgating} 車緊貼且煞車燈群亮起 (緊迫度: ${platoon}, 烏龜指數: ${microScore.toFixed(2)})，提早鎖定外側受阻`,
-      recommendedLane: "內側車道",
-      recommendedLaneId: 1,
-      recommendedLaneTag: "推薦走內側",
-      isClosed: false,
-      turtleLaneId: 2,
-      suppressedSpeedKmh: v2,
-      normalSpeedKmh: v1,
-      triggeredThresholdLabel: fusionTag,
-      dualModeFusionApplied: true,
-      microBottleneckScore: microScore,
-      frontClearanceCars: frontClearance,
-      rearTailgatingCars: rearTailgating,
-      brakeLightsActive: brakeActive,
-      platoonSeverity: platoon,
-      fusionDiagnosisTag: fusionTag,
-      spatialHeadwayMeters,
-      spatialSpeedGradient,
-      spaceHeadwayLane1Meters: Number(hs1.toFixed(1)),
-      spaceHeadwayLane2Meters: Number(hs2.toFixed(1)),
-      relativeSpeedDeltaKmh: Number(delta_V.toFixed(1)),
-      quadrantTrigger: "beta",
-      quadrantTriggerName: "象限 β: 雙模態視覺緊迫車隊",
-      quadrantPhysicalMeaning: "AI 視覺與地面感測融合鎖定外側緊迫慢速車隊",
-    };
+  if (isBrakeLightOrMicroBottleneck && (v1 > 0 || v2 > 0)) {
+    const isInnerAffected = cctvGapLane === 1;
+    if (isInnerAffected) {
+      const fusionTag = `🐢 AI視覺鎖定：內側煞車燈群/前淨空 ${frontClearance.toFixed(1)} 車身 / 後方 ${rearTailgating} 車緊貼`;
+      const suppressedSpd = Math.min(v1 > 0 ? v1 : 65, 65);
+      return {
+        vdId,
+        mileageKm,
+        innerSpeedKmh: v1,
+        outerSpeedKmh: v2,
+        innerFlowVehPerHour: flow1,
+        outerFlowVehPerHour: flow2,
+        speedDeltaKmh: Math.abs(v2 - v1),
+        status: "INNER_TURTLE_LANE",
+        statusLabel: "🐢 內側煞車減速 (AI視覺)",
+        description: `【雙模態視覺鎖定】AI 視覺檢測到內側車道${brakeActive ? "煞車燈群亮起" : "異常大淨空"}(前淨空 ${frontClearance.toFixed(1)} 車身、後方 ${rearTailgating} 車緊貼，微觀指數: ${microScore.toFixed(2)})，提早鎖定內側減速受阻`,
+        recommendedLane: "外側車道",
+        recommendedLaneId: 2,
+        recommendedLaneTag: "推薦走外側",
+        isClosed: false,
+        turtleLaneId: 1,
+        suppressedSpeedKmh: suppressedSpd,
+        normalSpeedKmh: v2 > 0 ? v2 : 75,
+        triggeredThresholdLabel: fusionTag,
+        dualModeFusionApplied: true,
+        microBottleneckScore: microScore,
+        frontClearanceCars: frontClearance,
+        rearTailgatingCars: rearTailgating,
+        brakeLightsActive: brakeActive,
+        platoonSeverity: platoon,
+        fusionDiagnosisTag: fusionTag,
+        spatialHeadwayMeters,
+        spatialSpeedGradient,
+        spaceHeadwayLane1Meters: Number(hs1.toFixed(1)),
+        spaceHeadwayLane2Meters: Number(hs2.toFixed(1)),
+        relativeSpeedDeltaKmh: Number(delta_V.toFixed(1)),
+        quadrantTrigger: "beta",
+        quadrantTriggerName: "象限 β: 雙模態內側煞車受阻",
+        quadrantPhysicalMeaning: "AI 視覺鎖定內側煞車燈群與微觀車隊緊縮",
+      };
+    } else {
+      const fusionTag = `⚠️ AI視覺鎖定：外側煞車燈群/前淨空 ${frontClearance.toFixed(1)} 車身 / 後方 ${rearTailgating} 車緊貼 (指數 ${microScore.toFixed(2)})`;
+      const suppressedSpd = Math.min(v2 > 0 ? v2 : 65, 65);
+      return {
+        vdId,
+        mileageKm,
+        innerSpeedKmh: v1,
+        outerSpeedKmh: v2,
+        innerFlowVehPerHour: flow1,
+        outerFlowVehPerHour: flow2,
+        speedDeltaKmh: Math.abs(v1 - v2),
+        status: "OUTER_SLOW_HEAVY_SUPPRESSION",
+        statusLabel: "⚠️ 煞車燈群 (AI視覺預警)",
+        description: `【雙模態視覺鎖定】AI 視覺檢測到外側車道${brakeActive ? "煞車燈群亮起" : "前淨空大車壓速"}(前淨空 ${frontClearance.toFixed(1)} 車身、後方 ${rearTailgating} 車緊貼，微觀指數: ${microScore.toFixed(2)})，提早鎖定外側受阻`,
+        recommendedLane: "內側車道",
+        recommendedLaneId: 1,
+        recommendedLaneTag: "推薦走內側",
+        isClosed: false,
+        turtleLaneId: 2,
+        suppressedSpeedKmh: suppressedSpd,
+        normalSpeedKmh: v1 > 0 ? v1 : 75,
+        triggeredThresholdLabel: fusionTag,
+        dualModeFusionApplied: true,
+        microBottleneckScore: microScore,
+        frontClearanceCars: frontClearance,
+        rearTailgatingCars: rearTailgating,
+        brakeLightsActive: brakeActive,
+        platoonSeverity: platoon,
+        fusionDiagnosisTag: fusionTag,
+        spatialHeadwayMeters,
+        spatialSpeedGradient,
+        spaceHeadwayLane1Meters: Number(hs1.toFixed(1)),
+        spaceHeadwayLane2Meters: Number(hs2.toFixed(1)),
+        relativeSpeedDeltaKmh: Number(delta_V.toFixed(1)),
+        quadrantTrigger: "beta",
+        quadrantTriggerName: "象限 β: 雙模態外側煞車受阻",
+        quadrantPhysicalMeaning: "AI 視覺鎖定外側煞車燈群與微觀緊迫車隊",
+      };
+    }
   }
 
   // 【規則二：VD 誤判過濾（反向校準 False-Alarm Filter）】
@@ -1302,13 +1342,13 @@ export function runVdTrafficEstimator(
     const vd = validatedRecords[i];
     const prevVd = i > 0 ? validatedRecords[i - 1] : undefined;
     
-    // 尋找最近的 CCTV 巡檢記錄以進行雙模態融合驗證 (匹配里程誤差 ≤ 1.5 公里)
+    // 尋找最近的 CCTV 巡檢記錄以進行雙模態融合驗證 (匹配里程誤差 ≤ 2.2 公里)
     const vdMileage = typeof vd.mileageKm === "number" ? vd.mileageKm : 18.0;
     const matchedCctv = Array.isArray(cctvRecords)
       ? cctvRecords.find(
           (c: any) =>
             (c.direction === direction || !c.direction) &&
-            Math.abs((c.mileageKm ?? 0) - vdMileage) <= 1.8
+            Math.abs((c.mileageKm ?? 0) - vdMileage) <= 2.2
         )
       : undefined;
 

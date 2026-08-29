@@ -220,6 +220,23 @@ export default function App() {
     prevCooldownRef.current = cooldown;
   }, [cooldown, tdxError, direction]);
 
+  // 監聽 CCTV 巡檢快取更新事件，即時觸發雙模態交通引擎融合重算
+  useEffect(() => {
+    const handleCctvUpdate = (e: any) => {
+      const updatedCctvNodes = e?.detail;
+      if (Array.isArray(updatedCctvNodes) && estimatorOutput) {
+        try {
+          const payloadToUse = estimatorOutput.raw_api.rawPayload || estimatorOutput.raw_api.records;
+          const recomputed = runVdTrafficEstimator(payloadToUse, direction, 18, updatedCctvNodes);
+          setEstimatorOutput(recomputed);
+        } catch {}
+      }
+    };
+
+    window.addEventListener("hsuehshan_cctv_updated", handleCctvUpdate);
+    return () => window.removeEventListener("hsuehshan_cctv_updated", handleCctvUpdate);
+  }, [estimatorOutput, direction]);
+
   // 全域快捷鍵 ⌘K / Ctrl+K 開啟搜尋
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -471,8 +488,13 @@ export default function App() {
 
     // If we already have estimator output, re-filter for the new direction immediately
     if (estimatorOutput) {
+      let cctvRecords: any[] = [];
+      try {
+        const cachedCctv = localStorage.getItem("hsuehshan_cctv_inspection_nodes");
+        if (cachedCctv) cctvRecords = JSON.parse(cachedCctv);
+      } catch {}
       const payloadToUse = estimatorOutput.raw_api.rawPayload || estimatorOutput.raw_api.records;
-      const recomputed = runVdTrafficEstimator(payloadToUse, newDir, 18);
+      const recomputed = runVdTrafficEstimator(payloadToUse, newDir, 18, cctvRecords);
       captureDetectionToDataset(recomputed, newDir);
       setEstimatorOutput(recomputed);
     } else if (hasStartedAnalysis && cooldown === 0) {
