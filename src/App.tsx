@@ -377,8 +377,15 @@ export default function App() {
         rawPayload = await response.json();
       }
 
-      // Execute traffic state estimation without modifying any math
-      const output = runVdTrafficEstimator(rawPayload, targetDir, 18);
+      // Execute traffic state estimation with dual-mode CCTV fusion
+      let cctvRecords: any[] = [];
+      try {
+        const cachedCctv = localStorage.getItem("hsuehshan_cctv_inspection_nodes");
+        if (cachedCctv) {
+          cctvRecords = JSON.parse(cachedCctv);
+        }
+      } catch {}
+      const output = runVdTrafficEstimator(rawPayload, targetDir, 18, cctvRecords);
 
       if (output.raw_api.records.length === 0) {
         throw new Error("官方 TDX 伺服器目前未回傳雪山隧道車輛偵測器數據");

@@ -14,6 +14,8 @@ import {
   VehicleBreakdown,
   LaneDiagnosisResult,
   LaneDiagnosisStatus,
+  CameraAiInspectionRecord,
+  CctvVisionAnalysisResult,
 } from "../types";
 import { parseRawTdxVdPayload } from "./apiParser";
 import { validateDetectorData } from "./dataValidation";
@@ -101,6 +103,43 @@ export function checkIsLateNightHours(
 // 雙車道高階車流流體力學與烏龜車/速差即時診斷模型 (Traffic Fluid Dynamics & Lane Diagnosis)
 // ---------------------------------------------------------------------------
 
+// 宏觀時速閘門遲滯狀態機記錄（避免 72.0 ~ 75.0 km/h 臨界震盪跳動）
+// "NORMAL": 一般模式, "HYPERSENSITIVE": 4D 超敏微觀模式
+let globalMacroGateState: "NORMAL" | "HYPERSENSITIVE" = "NORMAL";
+
+/**
+ * 宏觀時速閘門遲滯邏輯 (Hysteresis Band):
+ * - 若前次狀態為「一般模式」，當 macro_V 上升 >= 75.0 km/h 時，才切換為「4D 超敏微觀模式」。
+ * - 若前次狀態為「4D 超敏模式」，只有當 macro_V 下降 < 72.0 km/h 時，才退回「一般模式」。
+ * - 在 72.0 ~ 75.0 km/h 遲滯區間內保持前次狀態不變。
+ */
+export function evaluateMacroGateWithHysteresis(
+  macroSpeedKmh: number,
+  previousState?: "NORMAL" | "HYPERSENSITIVE"
+): "NORMAL" | "HYPERSENSITIVE" {
+  const current = previousState ?? globalMacroGateState;
+  if (current === "NORMAL") {
+    if (macroSpeedKmh >= 75.0) {
+      globalMacroGateState = "HYPERSENSITIVE";
+      return "HYPERSENSITIVE";
+    }
+    return "NORMAL";
+  } else {
+    if (macroSpeedKmh < 72.0) {
+      globalMacroGateState = "NORMAL";
+      return "NORMAL";
+    }
+    return "HYPERSENSITIVE";
+  }
+}
+
+/**
+ * 重設或設定宏觀時速閘門遲滯狀態（供測試或外部調度使用）
+ */
+export function setMacroGateState(state: "NORMAL" | "HYPERSENSITIVE") {
+  globalMacroGateState = state;
+}
+
 /**
  * 計算全線加權平均宏觀時速 macro_V = sum(V_i * Q_i) / sum(Q_i)
  */
@@ -137,7 +176,8 @@ export function diagnoseLaneStatus(
     [key: string]: any;
   },
   prevVd?: any,
-  macroSpeedKmh: number = 80.0
+  macroSpeedKmh: number = 80.0,
+  cctvRecord?: CameraAiInspectionRecord | CctvVisionAnalysisResult | any
 ): LaneDiagnosisResult {
   const vdId = (vd as any).detectorId || (vd as any).vdId || `VD-${(vd as any).mileageKm?.toFixed(1) || "0"}`;
   const mileageKm = typeof (vd as any).mileageKm === "number" ? (vd as any).mileageKm : 18.0;
@@ -149,6 +189,26 @@ export function diagnoseLaneStatus(
   const flow2 = (vd as any).outerFlow ?? (vd as any).lanes?.[1]?.flowVehPerHour ?? 0;
   const occ1 = (vd as any).innerOcc ?? (vd as any).lanes?.[0]?.occupancyPercent ?? 0;
   const occ2 = (vd as any).outerOcc ?? (vd as any).lanes?.[1]?.occupancyPercent ?? 0;
+
+  // 1. 基礎流體變數預處理 (為防止除以零，所有流量分母皆加上極小值保護 Math.max(Q, 1))
+  // (1) 空間車距 (Space Headway, hs) [公尺/輛]
+  const hs1 = (v1 * 1000) / Math.max(flow1, 1);
+  const hs2 = (v2 * 1000) / Math.max(flow2, 1);
+  const spatialHeadwayMeters = Number(hs2.toFixed(1));
+
+  // (2) 空間速度梯度 (Spatial Speed Gradient, ∇V) [km/h/km]
+  let grad_V2 = 0;
+  if (prevVd) {
+    const prevV2 = (prevVd as any).outerSpeed ?? (prevVd as any).lanes?.[1]?.speedKmh ?? v2;
+    const prevMileage = typeof (prevVd as any).mileageKm === "number" ? (prevVd as any).mileageKm : mileageKm;
+    const delta_x = Math.max(0.2, Math.abs(mileageKm - prevMileage));
+    grad_V2 = Number(((prevV2 - v2) / delta_x).toFixed(1));
+  }
+  const spatialSpeedGradient = grad_V2;
+
+  // (3) 內外側相對速差 (Relative Speed Delta, ΔV) [km/h]
+  const delta_V = v1 - v2;
+  const speedDelta = delta_V;
 
   // 1. 車道封閉檢測 (全線/單線 0 km/h 且 0 流量)
   if (v1 === 0 && flow1 === 0 && v2 === 0 && flow2 === 0) {
@@ -168,6 +228,12 @@ export function diagnoseLaneStatus(
       recommendedLaneTag: "全線封閉",
       isClosed: true,
       triggeredThresholdLabel: "流速流量為0 (全線封閉)",
+      spatialHeadwayMeters,
+      spatialSpeedGradient,
+      spaceHeadwayLane1Meters: 0,
+      spaceHeadwayLane2Meters: 0,
+      relativeSpeedDeltaKmh: 0,
+      quadrantTrigger: null,
     };
   }
 
@@ -189,6 +255,12 @@ export function diagnoseLaneStatus(
       isClosed: true,
       closedLaneId: 1,
       triggeredThresholdLabel: "內側流量流速為0 (內側封閉)",
+      spatialHeadwayMeters,
+      spatialSpeedGradient,
+      spaceHeadwayLane1Meters: 0,
+      spaceHeadwayLane2Meters: Number(hs2.toFixed(1)),
+      relativeSpeedDeltaKmh: -v2,
+      quadrantTrigger: null,
     };
   }
 
@@ -210,10 +282,120 @@ export function diagnoseLaneStatus(
       isClosed: true,
       closedLaneId: 2,
       triggeredThresholdLabel: "外側流量流速為0 (外側封閉)",
+      spatialHeadwayMeters,
+      spatialSpeedGradient,
+      spaceHeadwayLane1Meters: Number(hs1.toFixed(1)),
+      spaceHeadwayLane2Meters: 0,
+      relativeSpeedDeltaKmh: v1,
+      quadrantTrigger: null,
     };
   }
 
-  const speedDelta = v1 - v2; // 正值代表內側快，負值代表外側快
+  // 提取 CCTV 微觀幾何感知指標 (若有)
+  const frontClearance = cctvRecord?.front_clearance_cars ?? 2.0;
+  const rearTailgating = cctvRecord?.rear_tailgating_cars ?? 0;
+  const brakeActive = Boolean(cctvRecord?.brake_lights_active);
+  const platoon = cctvRecord?.platoon_severity ?? "NONE";
+  const microScore = typeof cctvRecord?.micro_bottleneck_score === "number" ? cctvRecord.micro_bottleneck_score : 0.15;
+  const cctvGapLane = cctvRecord?.gapLane ?? 0;
+
+  // =========================================================================
+  // 雙模態融合決策層 (Dual-Mode Fusion: Ground VD Telemetry ⊗ CCTV Micro Geometry)
+  // =========================================================================
+
+  // 【規則一：提前預警補償 (Early Warning Pre-Trip Compensation)】
+  // 當 VD 時速看似仍在 74~78 km/h (尚未全面崩潰)，但 AI 視覺輸出 outer_lane.micro_bottleneck_score >= 0.75 且 brake_lights_active === true
+  // ➜ 提前將該節點外側車道判定為「微觀受阻」，節點強制獨立變色為【琥珀橘色 (#f59e0b)】
+  const isEarlyWarningTriggered =
+    v2 >= 73.0 &&
+    v2 <= 80.0 &&
+    microScore >= 0.75 &&
+    brakeActive === true &&
+    (cctvGapLane === 2 || cctvGapLane === 0);
+
+  if (isEarlyWarningTriggered) {
+    const fusionTag = `🐢 AI視覺微觀鎖定：外側前淨空 ${frontClearance.toFixed(1)} 車身 / 後方 ${rearTailgating} 車緊貼煞車 / 預警指數 ${microScore.toFixed(2)}`;
+    return {
+      vdId,
+      mileageKm,
+      innerSpeedKmh: v1,
+      outerSpeedKmh: v2,
+      innerFlowVehPerHour: flow1,
+      outerFlowVehPerHour: flow2,
+      speedDeltaKmh: v1 - v2,
+      status: "OUTER_SLOW_HEAVY_SUPPRESSION",
+      statusLabel: "⚠️ 外側微觀受阻 (AI提前預警)",
+      description: `【雙模態提前預警】VD 實測時速 ${v2.toFixed(0)} km/h 尚未崩潰，但 AI 視覺檢測到外側前淨空 ${frontClearance.toFixed(1)} 車身、後方 ${rearTailgating} 車緊貼且煞車燈群亮起 (緊迫度: ${platoon}, 烏龜指數: ${microScore.toFixed(2)})，提早鎖定外側受阻`,
+      recommendedLane: "內側車道",
+      recommendedLaneId: 1,
+      recommendedLaneTag: "推薦走內側",
+      isClosed: false,
+      turtleLaneId: 2,
+      suppressedSpeedKmh: v2,
+      normalSpeedKmh: v1,
+      triggeredThresholdLabel: fusionTag,
+      dualModeFusionApplied: true,
+      microBottleneckScore: microScore,
+      frontClearanceCars: frontClearance,
+      rearTailgatingCars: rearTailgating,
+      brakeLightsActive: brakeActive,
+      platoonSeverity: platoon,
+      fusionDiagnosisTag: fusionTag,
+      spatialHeadwayMeters,
+      spatialSpeedGradient,
+      spaceHeadwayLane1Meters: Number(hs1.toFixed(1)),
+      spaceHeadwayLane2Meters: Number(hs2.toFixed(1)),
+      relativeSpeedDeltaKmh: Number(delta_V.toFixed(1)),
+      quadrantTrigger: "beta",
+      quadrantTriggerName: "象限 β: 雙模態視覺緊迫車隊",
+      quadrantPhysicalMeaning: "AI 視覺與地面感測融合鎖定外側緊迫慢速車隊",
+    };
+  }
+
+  // 【規則二：VD 誤判過濾（反向校準 False-Alarm Filter）】
+  // 當 VD 產生瞬時微小速差 (例如 3.0~7.0 km/h)，但 AI 視覺確認前後車距完全均勻 (platoon_severity === "NONE" 且 front_clearance_cars < 2.5 且 brake_lights_active === false)
+  // ➜ 抑制節點變黃，維持【暢行綠色 (雙車道流速均衡)】，避免虛警干擾
+  const isVdFalseAlarmFiltered =
+    (v1 - v2 >= 2.5 && v1 - v2 <= 7.0) &&
+    v2 >= 70.0 &&
+    platoon === "NONE" &&
+    frontClearance < 2.5 &&
+    brakeActive === false &&
+    microScore < 0.35;
+
+  if (isVdFalseAlarmFiltered) {
+    const fusionTag = `🛡️ AI視覺反向校準：微觀空間均勻 (前淨空 ${frontClearance.toFixed(1)} 車身 / 無煞車燈) ➜ 抑制虛警`;
+    return {
+      vdId,
+      mileageKm,
+      innerSpeedKmh: v1,
+      outerSpeedKmh: v2,
+      innerFlowVehPerHour: flow1,
+      outerFlowVehPerHour: flow2,
+      speedDeltaKmh: Math.abs(v1 - v2),
+      status: "NORMAL_BALANCED",
+      statusLabel: "雙車道流速均衡",
+      description: `VD 測站出現微幅速差 (${(v1 - v2).toFixed(1)} km/h)，經 AI 視覺微觀檢驗前後車距 ${frontClearance.toFixed(1)} 車身分佈極度均勻且無煞車連鎖波，判定為瞬時正常擾動並過濾虛警`,
+      recommendedLane: "兩邊皆可",
+      recommendedLaneId: null,
+      recommendedLaneTag: "兩邊皆可",
+      isClosed: false,
+      triggeredThresholdLabel: "AI 視覺校準：車距均勻 (抑制虛警)",
+      dualModeFusionApplied: true,
+      microBottleneckScore: microScore,
+      frontClearanceCars: frontClearance,
+      rearTailgatingCars: rearTailgating,
+      brakeLightsActive: brakeActive,
+      platoonSeverity: platoon,
+      fusionDiagnosisTag: fusionTag,
+      spatialHeadwayMeters,
+      spatialSpeedGradient,
+      spaceHeadwayLane1Meters: Number(hs1.toFixed(1)),
+      spaceHeadwayLane2Meters: Number(hs2.toFixed(1)),
+      relativeSpeedDeltaKmh: Number(delta_V.toFixed(1)),
+      quadrantTrigger: null,
+    };
+  }
 
   // 2. 烏龜車核心規則一：內側烏龜車道 (ΔV = v2 - v1 >= 10 km/h，如 19K~21K 案例)
   if (v2 - v1 >= 10.0 && v1 > 0 && v2 > 0) {
@@ -236,10 +418,190 @@ export function diagnoseLaneStatus(
       suppressedSpeedKmh: v1,
       normalSpeedKmh: v2,
       triggeredThresholdLabel: `ΔV ≥ 10 km/h (內側烏龜, 速差 ${(v2 - v1).toFixed(1)} km/h)`,
+      dualModeFusionApplied: Boolean(cctvRecord),
+      microBottleneckScore: microScore,
+      frontClearanceCars: frontClearance,
+      rearTailgatingCars: rearTailgating,
+      brakeLightsActive: brakeActive,
+      platoonSeverity: platoon,
+      spatialHeadwayMeters,
+      spatialSpeedGradient,
+      spaceHeadwayLane1Meters: Number(hs1.toFixed(1)),
+      spaceHeadwayLane2Meters: Number(hs2.toFixed(1)),
+      relativeSpeedDeltaKmh: Number(delta_V.toFixed(1)),
+      quadrantTrigger: null,
     };
   }
 
-  // 3. 烏龜車核心規則二：外側慢速/大車壓制 (ΔV = v1 - v2 >= 6 km/h，如 16.1K 案例)
+  // =========================================================================
+  // 四維微觀流體烏龜車決策矩陣 (4D Micro-Fluid Turtle Decision Matrix)
+  // =========================================================================
+  // 宏觀時速閘門評估（導入遲滯區間 Hysteresis Band: 上升 >= 75.0 開啟，下降 < 72.0 復歸，避免 74.9~75.1 震盪）
+  const isHypersensitiveGateActive = evaluateMacroGateWithHysteresis(macroSpeedKmh) === "HYPERSENSITIVE";
+
+  if (isHypersensitiveGateActive && v1 > 0 && v2 > 0) {
+    // 象限 α：心理防禦性大空檔 (The Defensive Paradox)
+    // 條件：V2 <= 75.0 且 hs2 >= 55.0 且 Q2 >= 400
+    // 物理意義：外側時速低落，但空間車距極大，且車流量達有效門檻 (Q2 >= 400 輛/時，防止 04:00~06:00 離峰稀疏流誤判)。
+    const isQuadrantAlpha = v2 <= 75.0 && hs2 >= 55.0 && flow2 >= 400;
+
+    // 象限 β：微觀緊迫車隊 (The Tight Platoon)
+    // 條件：V2 <= 76.0 且 hs2 <= 30.0
+    // 物理意義：外側時速低落，且車距被嚴重壓縮至危險邊緣，代表大量車流被前方慢車堵死。
+    const isQuadrantBeta = v2 <= 76.0 && hs2 <= 30.0;
+
+    // 象限 γ：跨車道相對壓制 (The Relative Suppression - 雙向對稱判定)
+    // 外側受阻條件：delta_V = (V1 - V2) >= 3.0 且 V2 < 82.0
+    const isQuadrantGammaOuter = delta_V >= 3.0 && v2 < 82.0;
+    // 內側受阻條件 (對稱判定)：(V2 - V1) >= 6.0 且 V1 < 82.0
+    const isQuadrantGammaInner = (v2 - v1) >= 6.0 && v1 < 82.0;
+
+    // 象限 δ：震波溯源 (The Spatial Shockwave)
+    // 條件：grad_V2 >= 12.0
+    // 物理意義：與上一站相比，外側車速每公里驟降超過 12 km/h，精準捕捉車流撞上慢車隊列的瞬間。
+    const isQuadrantDelta = grad_V2 >= 12.0;
+
+    // 優先檢查內側跨車道受阻 (象限 γ 內側受阻)
+    if (isQuadrantGammaInner && !isQuadrantAlpha && !isQuadrantBeta && !isQuadrantDelta) {
+      const qName = "象限 γ: 內側跨車道相對壓制";
+      const qMeaning = "內側時速慢於外側 6 km/h 以上且非處於極速暢行，內側正處於微觀受阻";
+      const qLabel = `🐢 內側受阻 (象限 γ: 跨車道相對壓制, 時速 ${v1.toFixed(0)} km/h, 速差 ${(v2 - v1).toFixed(1)} km/h)`;
+
+      return {
+        vdId,
+        mileageKm,
+        innerSpeedKmh: v1,
+        outerSpeedKmh: v2,
+        innerFlowVehPerHour: flow1,
+        outerFlowVehPerHour: flow2,
+        speedDeltaKmh: v2 - v1,
+        status: "INNER_TURTLE_LANE",
+        statusLabel: `⚠️ 內側微觀受阻 (${qName})`,
+        description: `【4D 微觀流體矩陣】${qMeaning} (V1: ${v1.toFixed(0)} km/h, hs1: ${hs1.toFixed(1)}m, 速差: ${(v2 - v1).toFixed(1)} km/h)`,
+        recommendedLane: "外側車道",
+        recommendedLaneId: 2,
+        recommendedLaneTag: "推薦走外側",
+        isClosed: false,
+        turtleLaneId: 1,
+        suppressedSpeedKmh: v1,
+        normalSpeedKmh: v2,
+        triggeredThresholdLabel: qLabel,
+        dualModeFusionApplied: Boolean(cctvRecord),
+        microBottleneckScore: microScore,
+        frontClearanceCars: frontClearance,
+        rearTailgatingCars: rearTailgating,
+        brakeLightsActive: brakeActive,
+        platoonSeverity: platoon,
+        spatialHeadwayMeters,
+        spatialSpeedGradient,
+        spaceHeadwayLane1Meters: Number(hs1.toFixed(1)),
+        spaceHeadwayLane2Meters: Number(hs2.toFixed(1)),
+        relativeSpeedDeltaKmh: Number(delta_V.toFixed(1)),
+        quadrantTrigger: "gamma",
+        quadrantTriggerName: qName,
+        quadrantPhysicalMeaning: qMeaning,
+      };
+    }
+
+    if (isQuadrantAlpha || isQuadrantBeta || isQuadrantGammaOuter || isQuadrantDelta) {
+      let qType: "alpha" | "beta" | "gamma" | "delta" = "alpha";
+      let qName = "";
+      let qMeaning = "";
+      let qLabel = "";
+
+      if (isQuadrantAlpha) {
+        qType = "alpha";
+        qName = "象限 α: 心理防禦性大空檔";
+        qMeaning = "外側時速低落但車距極大(且流量Q2≥400)，駕駛因大車壓迫感主動退讓形成鬆散路隊長";
+        qLabel = `🐢 外側受阻 (象限 α: 防禦性空檔, 時速 ${v2.toFixed(0)} km/h, 車距 ${hs2.toFixed(1)}m, 流量 ${flow2}輛/時)`;
+      } else if (isQuadrantBeta) {
+        qType = "beta";
+        qName = "象限 β: 微觀緊迫車隊";
+        qMeaning = "外側時速低落且車距被嚴重壓縮至危險邊緣，代表大量車流被前方慢車堵死";
+        qLabel = `🐢 外側受阻 (象限 β: 微觀緊迫車隊, 時速 ${v2.toFixed(0)} km/h, 車距 ${hs2.toFixed(1)}m)`;
+      } else if (isQuadrantGammaOuter) {
+        qType = "gamma";
+        qName = "象限 γ: 跨車道相對壓制";
+        qMeaning = "外側比內側慢 3 km/h 以上且非處於極速暢行，外側正處於微觀受阻";
+        qLabel = `🐢 外側受阻 (象限 γ: 跨車道相對壓制, 時速 ${v2.toFixed(0)} km/h, 速差 ΔV ${delta_V.toFixed(1)} km/h)`;
+      } else {
+        qType = "delta";
+        qName = "象限 δ: 震波溯源";
+        qMeaning = "與上一站相比外側車速每公里驟降超過 12 km/h，精準捕捉撞上慢車隊列瞬間";
+        qLabel = `🐢 外側受阻 (象限 δ: 震波溯源, 空間降速梯度 ∇V2 ${grad_V2.toFixed(1)} km/h/km)`;
+      }
+
+      return {
+        vdId,
+        mileageKm,
+        innerSpeedKmh: v1,
+        outerSpeedKmh: v2,
+        innerFlowVehPerHour: flow1,
+        outerFlowVehPerHour: flow2,
+        speedDeltaKmh: delta_V,
+        status: "OUTER_SLOW_HEAVY_SUPPRESSION",
+        statusLabel: `⚠️ 外側微觀受阻 (${qName})`,
+        description: `【4D 微觀流體矩陣】${qMeaning} (V2: ${v2.toFixed(0)} km/h, hs2: ${hs2.toFixed(1)}m, ∇V2: ${grad_V2.toFixed(1)} km/h/km, ΔV: ${delta_V.toFixed(1)} km/h)`,
+        recommendedLane: "內側車道",
+        recommendedLaneId: 1,
+        recommendedLaneTag: "推薦走內側",
+        isClosed: false,
+        turtleLaneId: 2,
+        suppressedSpeedKmh: v2,
+        normalSpeedKmh: v1,
+        triggeredThresholdLabel: qLabel,
+        dualModeFusionApplied: Boolean(cctvRecord),
+        microBottleneckScore: microScore,
+        frontClearanceCars: frontClearance,
+        rearTailgatingCars: rearTailgating,
+        brakeLightsActive: brakeActive,
+        platoonSeverity: platoon,
+        spatialHeadwayMeters,
+        spatialSpeedGradient,
+        spaceHeadwayLane1Meters: Number(hs1.toFixed(1)),
+        spaceHeadwayLane2Meters: Number(hs2.toFixed(1)),
+        relativeSpeedDeltaKmh: Number(delta_V.toFixed(1)),
+        quadrantTrigger: qType,
+        quadrantTriggerName: qName,
+        quadrantPhysicalMeaning: qMeaning,
+      };
+    }
+
+    // 若未觸發，且 V2 >= 82.0，則判定為真實暢行，維持【綠色】
+    if (v2 >= 82.0) {
+      return {
+        vdId,
+        mileageKm,
+        innerSpeedKmh: v1,
+        outerSpeedKmh: v2,
+        innerFlowVehPerHour: flow1,
+        outerFlowVehPerHour: flow2,
+        speedDeltaKmh: Math.abs(delta_V),
+        status: "NORMAL_BALANCED",
+        statusLabel: "雙車道流速均衡 (真實暢行)",
+        description: `外側時速 ${v2.toFixed(0)} km/h (≥82 km/h) 處於真實暢行區間，車距空間正常，兩側皆可順暢行駛`,
+        recommendedLane: "兩邊皆可",
+        recommendedLaneId: null,
+        recommendedLaneTag: "兩邊皆可",
+        isClosed: false,
+        triggeredThresholdLabel: `真實暢行 (外側 ${v2.toFixed(0)} km/h ≥ 82 km/h)`,
+        dualModeFusionApplied: Boolean(cctvRecord),
+        microBottleneckScore: microScore,
+        frontClearanceCars: frontClearance,
+        rearTailgatingCars: rearTailgating,
+        brakeLightsActive: brakeActive,
+        platoonSeverity: platoon,
+        spatialHeadwayMeters,
+        spatialSpeedGradient,
+        spaceHeadwayLane1Meters: Number(hs1.toFixed(1)),
+        spaceHeadwayLane2Meters: Number(hs2.toFixed(1)),
+        relativeSpeedDeltaKmh: Number(delta_V.toFixed(1)),
+        quadrantTrigger: null,
+      };
+    }
+  }
+
+  // 3. 烏龜車常規規則二：外側慢速/大車壓制 (ΔV = v1 - v2 >= 6 km/h，非高速宏觀區間)
   if (v1 - v2 >= 6.0 && v1 > 0 && v2 > 0) {
     return {
       vdId,
@@ -260,65 +622,21 @@ export function diagnoseLaneStatus(
       suppressedSpeedKmh: v2,
       normalSpeedKmh: v1,
       triggeredThresholdLabel: `ΔV ≥ 6 km/h (外側壓制, 速差 ${(v1 - v2).toFixed(1)} km/h)`,
+      dualModeFusionApplied: Boolean(cctvRecord),
+      microBottleneckScore: microScore,
+      frontClearanceCars: frontClearance,
+      rearTailgatingCars: rearTailgating,
+      brakeLightsActive: brakeActive,
+      platoonSeverity: platoon,
+      spatialHeadwayMeters,
+      spatialSpeedGradient,
+      spaceHeadwayLane1Meters: Number(hs1.toFixed(1)),
+      spaceHeadwayLane2Meters: Number(hs2.toFixed(1)),
+      relativeSpeedDeltaKmh: Number(delta_V.toFixed(1)),
+      quadrantTrigger: "gamma",
+      quadrantTriggerName: "象限 γ: 跨車道相對壓制",
+      quadrantPhysicalMeaning: "外側時速慢於內側 6 km/h 以上",
     };
-  }
-
-  // 4. 高階車流流體力學極致超敏偵測模型 (Traffic Fluid Dynamics Micro Model)
-  // 宏觀時速閘門：macro_V >= 75.0 km/h 時啟動微觀極致敏感運算
-  if (macroSpeedKmh >= 75.0 && v1 > 0 && v2 > 0) {
-    // (1) 車流密度 Density K (輛/公里)
-    const K1 = flow1 / (v1 || 1);
-    const K2 = flow2 / (v2 || 1);
-
-    // (2) 空間速度梯度 Spatial Speed Gradient ∇V2
-    let grad_V2 = 0;
-    if (prevVd) {
-      const prevV2 = (prevVd as any).outerSpeed ?? (prevVd as any).lanes?.[1]?.speedKmh ?? v2;
-      const prevMileage = typeof (prevVd as any).mileageKm === "number" ? (prevVd as any).mileageKm : mileageKm;
-      const delta_x = Math.max(0.2, Math.abs(mileageKm - prevMileage));
-      grad_V2 = (prevV2 - v2) / delta_x; // 外側空間降速梯度 (km/h per km)
-    }
-
-    // (3) 佔有率密度比 / 車隊指標 Platoon Index PI
-    const PI_2 = occ2 / (K2 || 1);
-    const PI_1 = occ1 / (K1 || 1);
-
-    // 極致超敏感判定矩陣 (Trigger Conditions A, B, C, D)
-    const condA_Shockwave = grad_V2 >= 12.0; // 空間震波：每公里時速驟降 12 km/h 以上
-    const condB_DensityInversion = (v1 - v2) >= 2.5 && K2 > K1 * 1.15; // 微小速差與密度反轉
-    const condC_PlatoonCompression = v2 < 82.0 && PI_2 > PI_1 * 1.25 && occ2 > 4.0; // 車隊壓縮
-    const condD_AbsoluteFloor = v2 < 73.0 && flow2 > 0; // 絕對防線 (時速 < 73 km/h 且非封閉)
-
-    if (condA_Shockwave || condB_DensityInversion || condC_PlatoonCompression || condD_AbsoluteFloor) {
-      const triggerReasons: string[] = [];
-      if (condA_Shockwave) triggerReasons.push(`空間震波 ∇V2=${grad_V2.toFixed(1)}`);
-      if (condB_DensityInversion) triggerReasons.push(`密度反轉 K2/K1=${(K2 / (K1 || 1)).toFixed(2)}`);
-      if (condC_PlatoonCompression) triggerReasons.push(`車隊壓縮 PI2=${PI_2.toFixed(1)}`);
-      if (condD_AbsoluteFloor) triggerReasons.push(`時速跌破73km/h (${v2.toFixed(0)})`);
-
-      const diagTag = `⚠️ 外側微觀受阻 [∇V: ${grad_V2.toFixed(1)}, K2: ${K2.toFixed(1)}, ΔV: ${(v1 - v2).toFixed(1)}] - 推薦行駛內側`;
-
-      return {
-        vdId,
-        mileageKm,
-        innerSpeedKmh: v1,
-        outerSpeedKmh: v2,
-        innerFlowVehPerHour: flow1,
-        outerFlowVehPerHour: flow2,
-        speedDeltaKmh: v1 - v2,
-        status: "OUTER_SLOW_HEAVY_SUPPRESSION",
-        statusLabel: "⚠️ 外側微觀受阻",
-        description: `高階流體力學超敏偵測到外側微觀受阻 (${triggerReasons.join(" | ")})，建議提早偏向內側車道順行`,
-        recommendedLane: "內側車道",
-        recommendedLaneId: 1,
-        recommendedLaneTag: "推薦走內側",
-        isClosed: false,
-        turtleLaneId: 2,
-        suppressedSpeedKmh: v2,
-        normalSpeedKmh: v1,
-        triggeredThresholdLabel: diagTag,
-      };
-    }
   }
 
   // 5. 雙車道流速均衡 (Normal Balanced)
@@ -338,6 +656,18 @@ export function diagnoseLaneStatus(
     recommendedLaneTag: "兩邊皆可",
     isClosed: false,
     triggeredThresholdLabel: "流速均衡 (ΔV < 2.5 km/h)",
+    dualModeFusionApplied: Boolean(cctvRecord),
+    microBottleneckScore: microScore,
+    frontClearanceCars: frontClearance,
+    rearTailgatingCars: rearTailgating,
+    brakeLightsActive: brakeActive,
+    platoonSeverity: platoon,
+    spatialHeadwayMeters,
+    spatialSpeedGradient,
+    spaceHeadwayLane1Meters: Number(hs1.toFixed(1)),
+    spaceHeadwayLane2Meters: Number(hs2.toFixed(1)),
+    relativeSpeedDeltaKmh: Number(delta_V.toFixed(1)),
+    quadrantTrigger: null,
   };
 }
 
@@ -868,7 +1198,8 @@ function extractVehicleTypesFromRaw(rawApiPayload: any, direction: string) {
 export function runVdTrafficEstimator(
   rawApiPayload: any,
   direction: Direction,
-  _switchingMarginSec: number = 18
+  _switchingMarginSec: number = 18,
+  cctvRecords?: any[]
 ): FinalEstimatorOutput {
   // Step 1: Parse Raw API Data and filter bounds
   const { records, allCorridorRecords, missingFields, totalRawItems } = parseRawTdxVdPayload(rawApiPayload, direction);
@@ -979,7 +1310,18 @@ export function runVdTrafficEstimator(
   for (let i = 0; i < validatedRecords.length; i++) {
     const vd = validatedRecords[i];
     const prevVd = i > 0 ? validatedRecords[i - 1] : undefined;
-    const diag = diagnoseLaneStatus(vd, prevVd, macroSpeedKmh);
+    
+    // 尋找最近的 CCTV 巡檢記錄以進行雙模態融合驗證 (匹配里程誤差 ≤ 1.5 公里)
+    const vdMileage = typeof vd.mileageKm === "number" ? vd.mileageKm : 18.0;
+    const matchedCctv = Array.isArray(cctvRecords)
+      ? cctvRecords.find(
+          (c: any) =>
+            (c.direction === direction || !c.direction) &&
+            Math.abs((c.mileageKm ?? 0) - vdMileage) <= 1.8
+        )
+      : undefined;
+
+    const diag = diagnoseLaneStatus(vd, prevVd, macroSpeedKmh, matchedCctv);
     laneDiagnoses.push(diag);
   }
 

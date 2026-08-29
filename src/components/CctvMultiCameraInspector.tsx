@@ -357,11 +357,45 @@ export default function CctvMultiCameraInspector({
                   <p className="text-slate-200">
                     {node.observationText}
                   </p>
+
+                  {/* 微觀車距幾何、煞車燈群與車隊結構感知 */}
+                  <div className="mt-2 pt-2 border-t border-slate-800/80 grid grid-cols-4 gap-1 text-center font-mono text-[10px]">
+                    <div className="p-1 rounded bg-slate-950/60 border border-slate-800">
+                      <span className="text-[8px] text-slate-400 block">前淨空長度</span>
+                      <span className={`font-bold ${((node as any).front_clearance_cars ?? 2.0) >= 4.0 ? "text-amber-300" : "text-slate-300"}`}>
+                        {((node as any).front_clearance_cars ?? 2.0).toFixed(1)} 車身
+                      </span>
+                    </div>
+                    <div className="p-1 rounded bg-slate-950/60 border border-slate-800">
+                      <span className="text-[8px] text-slate-400 block">後緊隨車數</span>
+                      <span className={`font-bold ${((node as any).rear_tailgating_cars ?? 0) >= 2 ? "text-rose-300" : "text-slate-300"}`}>
+                        {(node as any).rear_tailgating_cars ?? 0} 輛
+                      </span>
+                    </div>
+                    <div className="p-1 rounded bg-slate-950/60 border border-slate-800">
+                      <span className="text-[8px] text-slate-400 block">煞車燈群</span>
+                      <span className={`font-bold ${(node as any).brake_lights_active ? "text-rose-400 animate-pulse" : "text-emerald-400"}`}>
+                        {(node as any).brake_lights_active ? "🔴 亮起" : "⚪ 熄滅"}
+                      </span>
+                    </div>
+                    <div className="p-1 rounded bg-slate-950/60 border border-slate-800">
+                      <span className="text-[8px] text-slate-400 block">微觀壓制指數</span>
+                      <span className={`font-bold ${((node as any).micro_bottleneck_score ?? 0.1) >= 0.75 ? "text-rose-400" : ((node as any).micro_bottleneck_score ?? 0.1) >= 0.4 ? "text-amber-400" : "text-emerald-400"}`}>
+                        {((node as any).micro_bottleneck_score ?? 0.12).toFixed(2)}
+                      </span>
+                    </div>
+                  </div>
+
                   {node.hasAbnormalGap && (
-                    <div className="mt-1.5 pt-1.5 border-t border-slate-800/80 flex items-center gap-2 text-amber-300 text-[11px] font-semibold">
-                      <span>阻抗車道:</span>
-                      <span className="px-1.5 py-0.2 rounded bg-amber-500/20 border border-amber-500/30">
-                        第 {node.gapLane === 1 ? "1 (內側)" : "2 (外側)"} 車道前方淨空
+                    <div className="mt-1.5 pt-1.5 border-t border-slate-800/80 flex items-center justify-between text-[11px] font-semibold">
+                      <div className="flex items-center gap-1 text-amber-300">
+                        <span>阻抗車道:</span>
+                        <span className="px-1.5 py-0.2 rounded bg-amber-500/20 border border-amber-500/30">
+                          第 {node.gapLane === 1 ? "1 (內側)" : "2 (外側)"} 車道前方淨空
+                        </span>
+                      </div>
+                      <span className="text-[10px] text-purple-300 font-mono">
+                        車隊擠壓: {(node as any).platoon_severity || "NONE"}
                       </span>
                     </div>
                   )}

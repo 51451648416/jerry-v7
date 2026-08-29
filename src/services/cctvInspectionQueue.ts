@@ -10,7 +10,7 @@ import { CameraAiInspectionRecord, FullLineInspectionState } from "../types";
 // ==========================================
 // 系統常數與速率限制安全配置 (Google AI Studio 15 RPM / 1500 RPD & Upstash 配額守護)
 // ==========================================
-export const CCTV_CACHE_TTL_SEC = 360; // 配合 Vercel Cron 5 分鐘排程，設定 360 秒 (6 分鐘) 快取過期
+export const CCTV_CACHE_TTL_SEC = 90; // TTL 縮短至 90 秒，保持高度即時性
 export const CCTV_CACHE_TTL_MS = CCTV_CACHE_TTL_SEC * 1000;
 export const SEQUENTIAL_INTERVAL_MS = 4500; // 每個鏡頭辨識後強制作業間隔 4.5 秒 (上限 13.3 RPM < 15 RPM)
 export const MAX_RPM_LIMIT = 15;
@@ -187,6 +187,11 @@ class CctvInspectionQueueManager {
     confidence: number;
     observationText: string;
     modelName: string;
+    front_clearance_cars?: number;
+    rear_tailgating_cars?: number;
+    brake_lights_active?: boolean;
+    platoon_severity?: "NONE" | "MILD" | "MODERATE" | "SEVERE";
+    micro_bottleneck_score?: number;
   }> {
     if (!this.genAI) {
       this.initClients();
@@ -198,28 +203,43 @@ class CctvInspectionQueueManager {
         confidence: 0.9,
         observationText: `${node.locationName}視覺巡檢中，幾何空間車距均勻正常。`,
         modelName: "simulated-guard",
+        front_clearance_cars: 1.8,
+        rear_tailgating_cars: 0,
+        brake_lights_active: false,
+        platoon_severity: "NONE",
+        micro_bottleneck_score: 0.12,
       };
     }
 
     const base64Data = imageBuffer.toString("base64");
-    const prompt = `你現在是雪山隧道智慧交通控制中心的專業多模態視覺 AI 檢驗專家。
+    const prompt = `你現在是雪山隧道智慧交通控制中心最高階多模態視覺 AI 專家，專精於【微觀車距幾何、煞車燈群與車隊結構】的超精細感知。
 請仔細辨識這張國道 5 號雪山隧道「${node.locationName} (里程 ${node.mileage}K, ${node.direction === "S" ? "南向" : "北向"})」的即時監控畫面。
 
 【車道定義】
 - 車道 1 (內側車道 / 左側車道)：貼近隧道左側維修步道或雙黃/雙白中線。
 - 車道 2 (外側車道 / 右側車道)：貼近隧道右側人行步道與消防箱。
 
-【判斷核心指標：慢速車阻抗與異常大淨空】
-1. 是否有單一車道出現前方異常大淨空（超過 100~150 公尺無車，但該車道後方緊跟大批車流隊列）？
-2. 若有，是哪一個車道前方被壓速出現大淨空？（1 代表內側，2 代表外側，0 代表雙車道均勻無異常淨空）
-3. 若畫面淨空完全無車、或雙車道車流皆正常均勻行駛、或隧道全線停滯塞車，皆填 false, gapLane: 0。
+【微觀空間幾何診斷維度】
+1. front_clearance_cars（數值）：領頭車前方淨空車身長度（以標準轎車約 4.5m 為 1 單位。例如前方 30 米約 6.5 車身；若無淨空則填 1.0~2.0）。
+2. rear_tailgating_cars（整數）：緊隨在後方、車距小於 1.5 車身的車輛數（0~10）。
+3. brake_lights_active（布林值）：該車道後方跟隨車隊中是否有明顯亮起的車尾煞車紅燈（true/false）。
+4. platoon_severity（枚舉）：車隊擠壓緊迫度，僅能填 "NONE" | "MILD" | "MODERATE" | "SEVERE"。
+5. micro_bottleneck_score（數值 0.00 ~ 1.00）：綜合微觀烏龜車壓制指數。
+   - 計算基準：前方淨空越長（>4 車身）＋ 後方跟隨越緊（>=2 輛）＋ 煞車燈亮起 ➜ 分數越高（≥0.75 為高危險壓制）。
+6. gapLane：哪一車道存在微觀壓制/淨空帶頭現象（1: 內側, 2: 外側, 0: 無/雙線均衡）。
+7. hasAbnormalGap：若 micro_bottleneck_score >= 0.65 或 front_clearance_cars >= 4.0 填 true，否則填 false。
 
-請【僅嚴格回傳標準 JSON 物件】，不要輸出額外的 Markdown 標籤或對話：
+請【僅嚴格回傳標準 JSON 物件】，禁止包含額外的 Markdown 標籤或對話文字：
 {
   "hasAbnormalGap": boolean,
   "gapLane": 0 | 1 | 2,
-  "confidence": number (0.00 ~ 1.00),
-  "observationText": "繁體中文簡述空間幾何分佈觀察（25~45字）"
+  "confidence": number,
+  "front_clearance_cars": number,
+  "rear_tailgating_cars": number,
+  "brake_lights_active": boolean,
+  "platoon_severity": "NONE" | "MILD" | "MODERATE" | "SEVERE",
+  "micro_bottleneck_score": number,
+  "observationText": "繁體中文簡述微觀幾何觀察，包含淨空車身數與後方煞車狀態（25~50字）"
 }`;
 
     const modelsToTry = ["gemini-2.5-flash", "gemini-3.7-flash", "gemini-flash-latest", "gemini-3.1-flash-lite"];
@@ -260,15 +280,32 @@ class CctvInspectionQueueManager {
     const cleaned = text.replace(/```json\s*/gi, "").replace(/```\s*/g, "").trim();
     const parsed = JSON.parse(cleaned);
 
+    const frontClearance = typeof parsed.front_clearance_cars === "number" ? Math.max(0, parsed.front_clearance_cars) : 1.5;
+    const rearTailgating = typeof parsed.rear_tailgating_cars === "number" ? Math.max(0, Math.floor(parsed.rear_tailgating_cars)) : 0;
+    const brakeActive = Boolean(parsed.brake_lights_active);
+    const platoon = ["NONE", "MILD", "MODERATE", "SEVERE"].includes(parsed.platoon_severity) ? parsed.platoon_severity : "NONE";
+    
+    let microScore = typeof parsed.micro_bottleneck_score === "number"
+      ? Math.min(1, Math.max(0, parsed.micro_bottleneck_score))
+      : (frontClearance > 4.0 && rearTailgating >= 2 ? 0.78 : frontClearance > 3.0 ? 0.45 : 0.12);
+
+    const hasGap = Boolean(parsed.hasAbnormalGap) || microScore >= 0.70;
+    const gLane = parsed.gapLane === 1 || parsed.gapLane === 2 ? parsed.gapLane : (hasGap ? 2 : 0);
+
     return {
-      hasAbnormalGap: Boolean(parsed.hasAbnormalGap),
-      gapLane: parsed.gapLane === 1 || parsed.gapLane === 2 ? parsed.gapLane : 0,
+      hasAbnormalGap: hasGap,
+      gapLane: gLane as 0 | 1 | 2,
       confidence: typeof parsed.confidence === "number" ? Math.min(1, Math.max(0, parsed.confidence)) : 0.95,
+      front_clearance_cars: Number(frontClearance.toFixed(1)),
+      rear_tailgating_cars: rearTailgating,
+      brake_lights_active: brakeActive,
+      platoon_severity: platoon,
+      micro_bottleneck_score: Number(microScore.toFixed(2)),
       observationText:
         parsed.observationText ||
-        (parsed.hasAbnormalGap
-          ? `雲端視覺辨識偵測到第 ${parsed.gapLane === 1 ? "1 (內側)" : "2 (外側)"} 車道前方出現顯著空間淨空隊列`
-          : "車道幾何空間分佈均勻正常，各車道無異常帶頭壓速淨空。"),
+        (hasGap
+          ? `微觀視覺感知：第 ${gLane === 1 ? "1(內側)" : "2(外側)"} 車道前淨空 ${frontClearance.toFixed(1)} 車身，後方 ${rearTailgating} 車緊貼${brakeActive ? "並亮起煞車燈" : ""} (緊迫度 ${platoon})`
+          : "車道微觀幾何空間分佈均勻正常，前後車距均勻，無異常帶頭壓速淨空。"),
       modelName: usedModel,
     };
   }
@@ -305,6 +342,11 @@ class CctvInspectionQueueManager {
         gapLane: visionResult.gapLane,
         confidence: visionResult.confidence,
         observationText: visionResult.observationText,
+        front_clearance_cars: (visionResult as any).front_clearance_cars ?? 1.5,
+        rear_tailgating_cars: (visionResult as any).rear_tailgating_cars ?? 0,
+        brake_lights_active: (visionResult as any).brake_lights_active ?? false,
+        platoon_severity: (visionResult as any).platoon_severity ?? "NONE",
+        micro_bottleneck_score: (visionResult as any).micro_bottleneck_score ?? 0.1,
         analyzedAt: new Date().toISOString(),
         modelName: visionResult.modelName,
         cacheTtlRemainingSec: CCTV_CACHE_TTL_SEC,
@@ -611,6 +653,33 @@ class CctvInspectionQueueManager {
       isStale: true,
       status: "STANDBY",
     };
+  }
+
+  /**
+   * VD 實測流速動態覆寫作廢機制 (Dynamic Cache Invalidation by Ground-Truth VD):
+   * 當地面 VD 實測流速 V >= 85 km/h 且空間車距 hs >= 50m 時，代表該斷面已進入高速暢行狀態，
+   * 立即作廢（清除）舊的 CCTV 烏龜車壓制快取，防止殘留烏龜車歷史標籤誤導用路人。
+   */
+  public async invalidateCctvCacheIfVdFreeFlow(
+    cameraId: string,
+    vdSpeedKmh: number,
+    vdHeadwayMeters: number
+  ): Promise<boolean> {
+    if (vdSpeedKmh >= 85.0 && vdHeadwayMeters >= 50.0) {
+      // 1. 清除記憶體快取
+      this.memoryCache.delete(cameraId);
+      // 2. 清除 Redis 快取
+      if (this.redis) {
+        try {
+          const redisKey = `hsuehshan:cctv:cam:${cameraId}`;
+          await this.redis.del(redisKey);
+        } catch (rErr) {
+          console.warn(`[CctvQueue] Redis 動態失效刪除失敗 (cam:${cameraId}):`, rErr);
+        }
+      }
+      return true;
+    }
+    return false;
   }
 }
 

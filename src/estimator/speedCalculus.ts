@@ -17,7 +17,7 @@ import { SpeedAnalysisMetrics } from "../types";
  *   crawling floor v_crawl = 3.6 km/h (1.0 m/s minimum creeping speed during queue discharge)
  *   with documented engineering annotation.
  */
-export const MIN_PHYSICAL_CRAWL_SPEED_KMH = 3.6; // 1 m/s crawling creep
+export const MIN_PHYSICAL_CRAWL_SPEED_KMH = 5.0; // 物理安全下限 5.0 km/h (避免除零與極端數值溢位)
 export const FREE_FLOW_DEFAULT_SPEED_KMH = 85.0; // 自由流預設速度 85 km/h
 
 /**

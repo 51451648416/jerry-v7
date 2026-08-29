@@ -567,6 +567,70 @@ export default function VehicleLaneAlgorithmInspector({
                     </div>
                   </div>
 
+                  {/* 4D 微觀流體指標 (Space Headway & Gradient Telemetry) */}
+                  <div className="p-1.5 rounded-lg bg-slate-950/90 border border-slate-800/80 grid grid-cols-3 gap-1 text-center font-mono text-[10px]">
+                    <div>
+                      <span className="text-[8px] text-slate-400 block">內車距 hs1</span>
+                      <span className="font-bold text-sky-300">
+                        {diag.spaceHeadwayLane1Meters !== undefined ? `${diag.spaceHeadwayLane1Meters}m` : "-"}
+                      </span>
+                    </div>
+                    <div>
+                      <span className="text-[8px] text-slate-400 block">外車距 hs2</span>
+                      <span className={`font-bold ${diag.spaceHeadwayLane2Meters !== undefined && diag.spaceHeadwayLane2Meters >= 55 ? "text-amber-400" : "text-slate-300"}`}>
+                        {diag.spaceHeadwayLane2Meters !== undefined ? `${diag.spaceHeadwayLane2Meters}m` : `${diag.spatialHeadwayMeters || "-"}m`}
+                      </span>
+                    </div>
+                    <div>
+                      <span className="text-[8px] text-slate-400 block">降速梯度 ∇V2</span>
+                      <span className={`font-bold ${diag.spatialSpeedGradient !== undefined && diag.spatialSpeedGradient >= 12 ? "text-rose-400" : "text-slate-300"}`}>
+                        {diag.spatialSpeedGradient !== undefined ? `${diag.spatialSpeedGradient}k` : "-"}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* 4D 象限觸發標籤 (若有觸發 α, β, γ, δ) */}
+                  {diag.quadrantTrigger && (
+                    <div className="px-2 py-1 rounded-lg bg-amber-950/40 border border-amber-800/60 flex items-center justify-between text-[10px] font-mono text-amber-200">
+                      <span className="font-bold flex items-center gap-1">
+                        <span>🎯 {diag.quadrantTriggerName || `象限 ${diag.quadrantTrigger}`}</span>
+                      </span>
+                      <span className="text-[9px] text-amber-400/90 truncate max-w-[60%]">
+                        {diag.quadrantPhysicalMeaning}
+                      </span>
+                    </div>
+                  )}
+
+                  {/* 微觀幾何感知指標 (Micro-Geometric Telemetry) */}
+                  {diag.frontClearanceCars !== undefined && (
+                    <div className="p-1.5 rounded-lg bg-slate-950/90 border border-slate-800/80 grid grid-cols-4 gap-1 text-center font-mono text-[10px]">
+                      <div>
+                        <span className="text-[8px] text-slate-400 block">前淨空</span>
+                        <span className={`font-bold ${diag.frontClearanceCars >= 4.0 ? "text-amber-300" : "text-slate-300"}`}>
+                          {diag.frontClearanceCars} 車身
+                        </span>
+                      </div>
+                      <div>
+                        <span className="text-[8px] text-slate-400 block">緊隨車數</span>
+                        <span className={`font-bold ${diag.rearTailgatingCars >= 2 ? "text-rose-300" : "text-slate-300"}`}>
+                          {diag.rearTailgatingCars} 輛
+                        </span>
+                      </div>
+                      <div>
+                        <span className="text-[8px] text-slate-400 block">煞車群</span>
+                        <span className={`font-bold ${diag.brakeLightsActive ? "text-rose-400 animate-pulse" : "text-emerald-400"}`}>
+                          {diag.brakeLightsActive ? "🔴 亮起" : "⚪ 熄滅"}
+                        </span>
+                      </div>
+                      <div>
+                        <span className="text-[8px] text-slate-400 block">壓制指數</span>
+                        <span className={`font-bold ${diag.microBottleneckScore >= 0.7 ? "text-rose-400" : diag.microBottleneckScore >= 0.4 ? "text-amber-400" : "text-emerald-400"}`}>
+                          {diag.microBottleneckScore?.toFixed(2) || "0.10"}
+                        </span>
+                      </div>
+                    </div>
+                  )}
+
                   {/* 診斷原因與推薦標籤 */}
                   <div className="flex items-center justify-between text-[10px] pt-0.5 border-t border-slate-800/60 font-mono">
                     <span className="text-slate-400 truncate max-w-[65%]">

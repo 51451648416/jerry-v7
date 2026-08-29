@@ -225,6 +225,25 @@ export interface LaneDiagnosisResult {
   suppressedSpeedKmh?: number;
   normalSpeedKmh?: number;
   triggeredThresholdLabel?: string; // e.g. "ΔV ≥ 10 km/h (內側烏龜)" | "ΔV ≥ 6 km/h (外側壓制)" | "流量流速為0 (封閉)"
+  
+  // 雙模態微觀融合幾何指標 (Dual-Mode Micro Geometric Perception)
+  dualModeFusionApplied?: boolean;
+  microBottleneckScore?: number; // 0.0 ~ 1.0
+  frontClearanceCars?: number; // 領頭車前方淨空車身長度 (4.5m)
+  rearTailgatingCars?: number; // 緊貼後方車輛數
+  brakeLightsActive?: boolean; // 煞車燈群狀態
+  platoonSeverity?: "NONE" | "MILD" | "MODERATE" | "SEVERE";
+  fusionDiagnosisTag?: string; // 綜合診斷標籤
+  spatialHeadwayMeters?: number; // 空間車距 hs (公尺)
+  spatialSpeedGradient?: number; // 空間降速梯度 ∇V (km/h per km)
+
+  // 四維微觀流體烏龜車決策矩陣 (4D Micro-Fluid Turtle Decision Matrix)
+  spaceHeadwayLane1Meters?: number; // hs1 = (V1 * 1000) / max(Q1, 1) (公尺/輛)
+  spaceHeadwayLane2Meters?: number; // hs2 = (V2 * 1000) / max(Q2, 1) (公尺/輛)
+  relativeSpeedDeltaKmh?: number; // delta_V = V1 - V2 (km/h)
+  quadrantTrigger?: "alpha" | "beta" | "gamma" | "delta" | null; // 觸發之象限 (α | β | γ | δ)
+  quadrantTriggerName?: string; // 象限名稱 (如 "象限 α: 心理防禦性大空檔")
+  quadrantPhysicalMeaning?: string; // 物理意義簡述
 }
 
 export interface ApiDirectVdTelemetry {
@@ -760,6 +779,14 @@ export interface CameraAiInspectionRecord {
   gapLane: 0 | 1 | 2; // 0: 無, 1: 內側, 2: 外側
   confidence: number;
   observationText: string;
+  
+  // 微觀幾何感知指標 (Micro Geometric Perception)
+  front_clearance_cars?: number; // 領頭車前方淨空車身長度 (4.5m)
+  rear_tailgating_cars?: number; // 緊貼後方車輛數 (<1.5車身)
+  brake_lights_active?: boolean; // 煞車燈群亮起
+  platoon_severity?: "NONE" | "MILD" | "MODERATE" | "SEVERE";
+  micro_bottleneck_score?: number; // 0.0 ~ 1.0 綜合微觀烏龜車壓制指數
+  
   analyzedAt: string;
   modelName: string;
   cacheTtlRemainingSec: number;
@@ -803,6 +830,14 @@ export interface CctvVisionAnalysisResult {
   gapLane: 0 | 1 | 2; // 0: None, 1: Inner (Lane 1), 2: Outer (Lane 2)
   confidence: number;
   observationText: string;
+  
+  // 微觀幾何感知指標 (Micro Geometric Perception)
+  front_clearance_cars?: number; // 領頭車前方淨空車身長度 (4.5m)
+  rear_tailgating_cars?: number; // 緊貼後方車輛數 (<1.5車身)
+  brake_lights_active?: boolean; // 煞車燈群亮起
+  platoon_severity?: "NONE" | "MILD" | "MODERATE" | "SEVERE";
+  micro_bottleneck_score?: number; // 0.0 ~ 1.0 綜合微觀烏龜車壓制指數
+
   cameraId?: string;
   cameraTitle?: string;
   mileageKm?: number;
@@ -947,6 +982,14 @@ export interface CctvVisionAnalysisResult {
   gapLane: 0 | 1 | 2; // 0: None, 1: Inner (Lane 1), 2: Outer (Lane 2)
   confidence: number;
   observationText: string;
+  
+  // 微觀幾何感知指標 (Micro Geometric Perception)
+  front_clearance_cars?: number; // 領頭車前方淨空車身長度 (4.5m)
+  rear_tailgating_cars?: number; // 緊貼後方車輛數 (<1.5車身)
+  brake_lights_active?: boolean; // 煞車燈群亮起
+  platoon_severity?: "NONE" | "MILD" | "MODERATE" | "SEVERE";
+  micro_bottleneck_score?: number; // 0.0 ~ 1.0 綜合微觀烏龜車壓制指數
+
   cameraId?: string;
   cameraTitle?: string;
   mileageKm?: number;

@@ -129,9 +129,9 @@ export const DIRECTION_CCTV_CONFIGS = {
   },
 };
 
-// 雲端 CCTV 影像分析長效快取 (TTL: 240 秒 = 4 分鐘，南北向獨立快取)
-const CCTV_VISION_CACHE_TTL_MS = 240 * 1000;
-const CCTV_MANUAL_COOLDOWN_MS = 190 * 1000; // 190 秒冷卻時間
+// 雲端 CCTV 影像分析快取 (TTL: 90 秒，保持高精確即時性，南北向獨立快取)
+const CCTV_VISION_CACHE_TTL_MS = 90 * 1000;
+const CCTV_MANUAL_COOLDOWN_MS = 60 * 1000; // 60 秒冷卻時間
 let lastManualAnalysisTimestamp: Record<"N" | "S", number> = {
   N: 0,
   S: 0,
@@ -456,7 +456,20 @@ export async function getLatestCctvCrossValidation(
   // 嘗試從 Upstash Redis 讀取快取
   const redis = getRedis();
   const redisKey = `hsuehshan:cctv:cross_validation:${direction}`;
-  if (!forceRefresh && redis) {
+
+  // 動態快取作廢保護 (Dynamic Invalidation Guard):
+  // 若地面 VD 實測外側流速已達高速暢行 (>=85 km/h)，強制清除舊視覺壓制快取，避免烏龜車標籤殘留
+  const isGroundVdSuperFreeFlow = groundVd.outerSpeedKmh >= 85.0 && groundVd.innerSpeedKmh >= 80.0;
+  if (isGroundVdSuperFreeFlow) {
+    globalCctvCrossValidationCache[direction] = null;
+    if (redis) {
+      try {
+        await redis.del(redisKey);
+      } catch {}
+    }
+  }
+
+  if (!forceRefresh && !isGroundVdSuperFreeFlow && redis) {
     try {
       const cachedRedis: any = await redis.get(redisKey);
       if (cachedRedis && cachedRedis.cctvResult && cachedRedis.cachedAt) {
@@ -490,7 +503,7 @@ export async function getLatestCctvCrossValidation(
           cctvResult,
           cachedAt: now,
         },
-        { ex: 240 }
+        { ex: 90 }
       );
     } catch {}
   }
