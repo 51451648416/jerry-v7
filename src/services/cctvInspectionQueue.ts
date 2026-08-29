@@ -222,9 +222,9 @@ class CctvInspectionQueueManager {
   "observationText": "繁體中文簡述空間幾何分佈觀察（25~45字）"
 }`;
 
-    const modelsToTry = ["gemini-3.1-flash-lite", "gemini-3.7-flash", "gemini-flash-latest"];
+    const modelsToTry = ["gemini-2.5-flash", "gemini-3.7-flash", "gemini-flash-latest", "gemini-3.1-flash-lite"];
     let response: any = null;
-    let usedModel = "gemini-3.1-flash-lite";
+    let usedModel = "gemini-2.5-flash";
     let lastError: any = null;
 
     for (const m of modelsToTry) {
@@ -324,10 +324,10 @@ class CctvInspectionQueueManager {
         try {
           await this.redis.set(
             redisKey,
-            {
+            JSON.stringify({
               record,
               cachedAt: now,
-            },
+            }),
             { ex: CCTV_CACHE_TTL_SEC }
           );
         } catch (rErr) {
@@ -455,9 +455,12 @@ class CctvInspectionQueueManager {
       if (this.redis) {
         try {
           const redisKey = `hsuehshan:cctv:cam:${node.id}`;
-          const cachedVal: any = await this.redis.get(redisKey);
-          if (cachedVal && cachedVal.record && cachedVal.cachedAt) {
-            nodeData = cachedVal;
+          const rawVal: any = await this.redis.get(redisKey);
+          if (rawVal) {
+            const cachedVal = typeof rawVal === "string" ? JSON.parse(rawVal) : rawVal;
+            if (cachedVal && cachedVal.record && cachedVal.cachedAt) {
+              nodeData = cachedVal;
+            }
           }
         } catch {
           // Redis 降級到 Memory
