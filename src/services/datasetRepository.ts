@@ -1,6 +1,7 @@
 import { CapturedDatasetRecord, Direction, FinalEstimatorOutput } from "../types";
 import { trainModelOnDataset, getLearnedParameters, saveLearnedParameters } from "../estimator/modelTrainingEngine";
 import { synthesizeEtcGroundTruthSec } from "./tdxDirectClient";
+import { getTaipeiTimeInfo, WEEKDAY_NAMES } from "../utils/taipeiTime";
 
 const LOCAL_STORAGE_DATASET_KEY = "HSUEHSHAN_CAPTURED_DATASET_V1";
 const CANDIDATE_STORAGE_KEYS = [
@@ -10,8 +11,6 @@ const CANDIDATE_STORAGE_KEYS = [
   "HSUEHSHAN_DATASET_RECORDS",
 ];
 export const MAX_DATASET_STORAGE_LIMIT = 400;
-
-const WEEKDAY_NAMES = ["星期日", "星期一", "星期二", "星期三", "星期四", "星期五", "星期六"];
 
 // 全域記憶體快取與事件監聽器，確保各組件與新裝置開啟時即時 Hydrate
 let inMemoryDatasetCache: CapturedDatasetRecord[] | null = null;
@@ -34,12 +33,13 @@ function broadcastDatasetChange(records: CapturedDatasetRecord[]) {
 }
 
 /**
- * 判斷國定假日或特殊疏運期間
+ * 判斷國定假日或特殊疏運期間 (強制以台北標準時間計算)
  */
 export function getHolidayTag(date: Date): { isHoliday: boolean; holidayName: string } {
-  const month = date.getMonth() + 1; // 1-12
-  const day = date.getDate();
-  const dayOfWeek = date.getDay(); // 0 = Sunday, 6 = Saturday
+  const info = getTaipeiTimeInfo(date);
+  const month = info.month;
+  const day = info.day;
+  const dayOfWeek = info.dayOfWeekIndex; // 0 = Sunday, 6 = Saturday
 
   // 台灣主要節慶與疏運週期辨識 (支援跨年份通用規則)
   if (month === 1 && day === 1) return { isHoliday: true, holidayName: "元旦連假" };
@@ -293,17 +293,18 @@ export function captureDetectionToDataset(
 ): { newRecord: CapturedDatasetRecord; totalCount: number; autoTrainedAndCleared?: boolean } {
   const currentDataset = getStoredDataset();
   const now = new Date();
-  const timeFormatted = now.toLocaleString("zh-TW", { hour12: false });
-  const year = now.getFullYear();
-  const month = now.getMonth() + 1;
-  const day = now.getDate();
-  const hour = now.getHours();
-  const minute = now.getMinutes();
-  const second = now.getSeconds();
-  const dayOfWeek = WEEKDAY_NAMES[now.getDay()];
-  const isWeekend = now.getDay() === 0 || now.getDay() === 6;
+  const info = getTaipeiTimeInfo(now);
+  const timeFormatted = info.timeFormatted;
+  const year = info.year;
+  const month = info.month;
+  const day = info.day;
+  const hour = info.hour;
+  const minute = info.minute;
+  const second = info.second;
+  const dayOfWeek = info.dayOfWeek;
+  const isWeekend = info.isWeekend;
   const holidayInfo = getHolidayTag(now);
-  const dateStr = `${year}-${month.toString().padStart(2, "0")}-${day.toString().padStart(2, "0")}`;
+  const dateStr = info.dateStr;
 
   const id = `DS-${year}${month.toString().padStart(2, "0")}${day.toString().padStart(2, "0")}-${hour
     .toString()

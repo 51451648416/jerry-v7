@@ -1,4 +1,5 @@
 // 訪客進入人數與全站流量計數服務 (Visitor & Traffic Statistics Engine)
+import { getTaipeiTimeInfo } from "../utils/taipeiTime";
 
 export interface VisitorStatsData {
   totalEntered: number;
@@ -17,7 +18,7 @@ type StatsListener = (stats: VisitorStatsData) => void;
 const listeners: Set<StatsListener> = new Set();
 
 const getTodayDateString = (): string => {
-  return new Date().toISOString().split("T")[0];
+  return getTaipeiTimeInfo(new Date()).dateStr;
 };
 
 const notifyListeners = (stats: VisitorStatsData) => {
@@ -47,7 +48,7 @@ export const getVisitorStats = (): VisitorStatsData => {
         }
 
         // 即時在線人數自然微幅動態估算
-        const hour = new Date().getHours();
+        const hour = getTaipeiTimeInfo(new Date()).hour;
         const isPeak = (hour >= 7 && hour <= 10) || (hour >= 15 && hour <= 21);
         const baseOnline = isPeak ? 68 : 29;
         const jitter = Math.floor(Math.sin(Date.now() / 30000) * 12) + (Date.now() % 7);

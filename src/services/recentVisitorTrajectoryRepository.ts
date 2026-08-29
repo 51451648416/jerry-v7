@@ -1,4 +1,5 @@
 import { Direction, FinalEstimatorOutput } from "../types";
+import { getTaipeiTimeInfo } from "../utils/taipeiTime";
 
 /**
  * 訪客路況走勢快照記錄 (每筆代表訪客在特定時間點所觀察到的即時路況)
@@ -169,8 +170,9 @@ export function getRecent2HourDeduplicatedTrajectory(direction: Direction): {
 function generateSyntheticRecent2HourTrend(direction: Direction, nowMs: number): VisitorTrajectoryPoint[] {
   const points: VisitorTrajectoryPoint[] = [];
   const totalSlots = 24; // 2 小時 = 120 分鐘 / 5 分鐘 = 24 組 (最多 36 組涵蓋近 3 小時)
-  const currentHour = new Date(nowMs).getHours();
-  const isWeekend = [0, 6].includes(new Date(nowMs).getDay());
+  const tpInfo = getTaipeiTimeInfo(nowMs);
+  const currentHour = tpInfo.hour;
+  const isWeekend = tpInfo.isWeekend;
 
   // 基礎流速走勢
   let baseSpd = 78;

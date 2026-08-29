@@ -23,6 +23,7 @@ import {
 } from "lucide-react";
 import { FinalEstimatorOutput, CctvVdCrossValidationState } from "../types";
 import CctvMultiCameraInspector from "./CctvMultiCameraInspector";
+import { detectTunnelPeakStatus, getTaipeiTimeInfo } from "../utils/taipeiTime";
 
 interface VehicleLaneAlgorithmInspectorProps {
   estimatorOutput?: FinalEstimatorOutput | null;
@@ -162,7 +163,11 @@ export default function VehicleLaneAlgorithmInspector({
 
   const truckRatio = totalOuterVol > 0 ? (outerLane.volumeT || 0) / totalOuterVol : 0;
   const busRatio = totalOuterVol > 0 ? (outerLane.volumeL || 0) / totalOuterVol : 0;
-  const isWeekendPeak = liveData?.isWeekendPeak ?? false;
+  
+  // 台北標準時間與精準時空尖峰特徵辨識
+  const taipeiTime = getTaipeiTimeInfo(new Date());
+  const peakStatus = detectTunnelPeakStatus(new Date(), currentDirection);
+  const isWeekendPeak = liveData?.isWeekendPeak !== undefined ? liveData.isWeekendPeak : peakStatus.isPeak;
 
   // 阻抗扣減計算（若無大貨車/大客車且處於自由流暢行區間，折減量嚴格為 0）
   const hasTrucks = (outerLane.volumeT || 0) > 0;
@@ -874,13 +879,13 @@ export default function VehicleLaneAlgorithmInspector({
           {/* 規則 2：假日大客車專用道交織阻抗 */}
           <div className="p-3 rounded-xl bg-slate-900 border border-slate-800 space-y-1.5">
             <div className="flex items-center justify-between font-bold">
-              <span className="text-slate-200">規則 2：假日客運專用道匯流交織</span>
+              <span className="text-slate-200">規則 2：客運專用道匯流交織</span>
               <span className={`px-2 py-0.5 rounded text-[10px] font-mono ${isWeekendPeak && busRatio > 0.12 ? "bg-amber-950 text-amber-400 border border-amber-800" : "bg-slate-800 text-slate-400"}`}>
-                {isWeekendPeak && busRatio > 0.12 ? `觸發 (-2.0 km/h)` : isWeekendPeak ? "未觸發 (客運 ≤12%)" : "平日/非尖峰"}
+                {isWeekendPeak && busRatio > 0.12 ? `觸發 (-2.0 km/h)` : isWeekendPeak ? "未觸發 (客運 ≤12%)" : "非大客車尖峰"}
               </span>
             </div>
             <p className="text-[11px] text-slate-400 leading-relaxed font-mono">
-              週末尖峰時段: {isWeekendPeak ? "是 (週六日 13~21時)" : "否"} | 客運佔比: {(busRatio * 100).toFixed(1)}% (門檻: 12.0%)。
+              時段判定: {peakStatus.periodName} ({taipeiTime.dayOfWeek} {String(taipeiTime.hour).padStart(2, "0")}:{String(taipeiTime.minute).padStart(2, "0")}) | 客運佔比: {(busRatio * 100).toFixed(1)}% (門檻: 12.0%)。
             </p>
           </div>
 

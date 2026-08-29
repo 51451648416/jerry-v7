@@ -35,6 +35,7 @@ import {
   detectTurtleCars,
 } from "./doubleVerificationEngine";
 import { evaluateFreeway5MeteringSystem } from "./rampMeteringEngine";
+import { detectTunnelPeakStatus, isWeekendPeakTime as isWeekendPeakTimeUtil, getTaipeiTimeInfo } from "../utils/taipeiTime";
 
 export const HSUEHSHAN_TUNNEL_TOTAL_LENGTH_KM = 13.097; // 嚴格定義：雪山隧道全長 13.097 km
 export const MODEL_DISCRETIZATION_SLICES = 20; // 嚴格定義：20 個空間微元切片
@@ -935,18 +936,8 @@ function classifyCongestion(
 
 // --- Added Vehicle Type Extraction & Penalty Logic ---
 
-function isWeekendPeakTime(date: Date = new Date()): boolean {
-  try {
-    const tzString = date.toLocaleString("en-US", { timeZone: "Asia/Taipei" });
-    const localDate = new Date(tzString);
-    const day = localDate.getDay(); 
-    const hour = localDate.getHours();
-    return (day === 0 || day === 6) && hour >= 13 && hour <= 21;
-  } catch {
-    const day = date.getDay();
-    const hour = date.getHours();
-    return (day === 0 || day === 6) && hour >= 13 && hour <= 21;
-  }
+function isWeekendPeakTime(date: Date = new Date(), direction: Direction = "N"): boolean {
+  return isWeekendPeakTimeUtil(date, direction);
 }
 
 // 輔助函式 resolveLaneIdentifier: 依據車道序號/LaneID/LaneNo與描述嚴格正確分流 (1: 內側/快車道, 2: 外側/慢車道)
@@ -1560,7 +1551,7 @@ export function runVdTrafficEstimator(
   const truckRatio = totalOuterVol > 0 ? vehStats.outerVolT / totalOuterVol : 0;
   const busRatio = totalOuterVol > 0 ? vehStats.outerVolL / totalOuterVol : 0;
   
-  const isWeekendPeak = isWeekendPeakTime();
+  const isWeekendPeak = isWeekendPeakTime(new Date(), direction);
   let outerSpeedPenalty = 0;
   
   // 確保大車數量為 0 且密度正常時，v_eff 嚴格等於實測流速（折減量 = 0）

@@ -1,6 +1,7 @@
 import { RawApiDetectorRecord, Direction } from "../types";
 import { detectMeteringEventsFromPayload, ExtractedLiveEvent } from "../services/liveEventsEngine";
 import { MAINLINE_CAPACITY_VDS, ON_RAMP_MEASURED_VDS, TOUCHENG_MAINLINE_UPSTREAM_VD_ID, TOUCHENG_MAINLINE_METER_VD_ID } from "../data/detectorConfig";
+import { getTaipeiTimeInfo } from "../utils/taipeiTime";
 
 export type MeteringIntensity = "SMOOTH" | "MODERATE" | "STRICT" | "OFF";
 
@@ -108,8 +109,8 @@ export function calculateRampSignalTimingWithDualTrack(
     }
   }
 
-  // 檢查是否為深夜暫停時段 (23:00 至隔日 06:00 國 5 不實施匝道儀控與主線號誌管制)
-  const currentHour = new Date().getHours();
+  // 檢查是否為深夜暫停時段 (23:00 至隔日 06:00 國 5 不實施匝道儀控與主線號誌管制，強制以台北時間判定)
+  const currentHour = getTaipeiTimeInfo(new Date()).hour;
   const isNightSuspension = currentHour >= 23 || currentHour < 6;
 
   if (isNightSuspension) {
@@ -223,7 +224,7 @@ export function estimateTouchengMainlineMetering(
   detectors: RawApiDetectorRecord[],
   events: ExtractedLiveEvent[] | any[] = []
 ): MainlineMeteringResult {
-  const currentHour = new Date().getHours();
+  const currentHour = getTaipeiTimeInfo(new Date()).hour;
   const isNightSuspension = currentHour >= 23 || currentHour < 6;
 
   if (isNightSuspension) {

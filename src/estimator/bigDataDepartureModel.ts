@@ -1,16 +1,9 @@
 import { Direction, DepartureTimeSlot, BigDataClusterInfo, CapturedDatasetRecord } from "../types";
 import { formatSecondsToMinSec } from "./trafficEngine";
 import { getLearnedParameters } from "./modelTrainingEngine";
+import { getTaipeiTimeInfo, WEEKDAY_NAMES } from "../utils/taipeiTime";
 
-export const WEEKDAY_NAMES_LIST = [
-  "星期日",
-  "星期一",
-  "星期二",
-  "星期三",
-  "星期四",
-  "星期五",
-  "星期六",
-];
+export const WEEKDAY_NAMES_LIST = WEEKDAY_NAMES;
 
 export interface WeekOfMonthResult {
   month: number;
@@ -23,28 +16,20 @@ export interface WeekOfMonthResult {
 }
 
 /**
- * 計算指定日期的「幾月的第幾週」與星期幾
+ * 計算指定日期的「幾月的第幾週」與星期幾 (強制以台北標準時間計算)
  * @param date 目標日期
  */
 export function calculateWeekOfMonth(date: Date): WeekOfMonthResult {
-  const year = date.getFullYear();
-  const month = date.getMonth() + 1; // 1-12
-  const day = date.getDate();
-  const dayOfWeekIndex = date.getDay(); // 0 = Sunday, 6 = Saturday
-  const dayOfWeek = WEEKDAY_NAMES_LIST[dayOfWeekIndex];
-
-  // 計算該月的第幾週 (1~5)
-  const weekOfMonth = Math.min(5, Math.ceil(day / 7));
-  const weekOfMonthLabel = `${month}月 第${weekOfMonth}週`;
+  const info = getTaipeiTimeInfo(date);
 
   return {
-    year,
-    month,
-    weekOfMonth,
-    weekOfMonthLabel,
-    day,
-    dayOfWeek,
-    dayOfWeekIndex,
+    year: info.year,
+    month: info.month,
+    weekOfMonth: info.weekOfMonth,
+    weekOfMonthLabel: info.weekOfMonthLabel,
+    day: info.day,
+    dayOfWeek: info.dayOfWeek,
+    dayOfWeekIndex: info.dayOfWeekIndex,
   };
 }
 
@@ -57,12 +42,13 @@ export interface SpecialDayContext {
 }
 
 /**
- * 依據日期判斷是否為「特別日」與特定疏運情境 (國定連假、春節、寒暑假、前夕尖峰、常態週末/平日)
+ * 依據日期判斷是否為「特別日」與特定疏運情境 (強制以台北標準時間計算)
  */
 export function identifySpecialDayContext(date: Date, direction: Direction): SpecialDayContext {
-  const month = date.getMonth() + 1;
-  const day = date.getDate();
-  const dayOfWeek = date.getDay(); // 0=Sun, 6=Sat
+  const info = getTaipeiTimeInfo(date);
+  const month = info.month;
+  const day = info.day;
+  const dayOfWeek = info.dayOfWeekIndex; // 0=Sun, 6=Sat
 
   // 1. 農曆春節連假疏運
   if (month === 2 && day >= 6 && day <= 17) {

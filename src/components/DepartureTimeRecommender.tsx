@@ -23,6 +23,7 @@ import { Direction, FinalEstimatorOutput, DepartureRecommendation } from "../typ
 import { CORRIDOR_INTERCHANGES } from "../data/corridorConfig";
 import { computeDepartureRecommendations } from "../estimator/corridorEngine";
 import { getLearnedParameters, getContinuousLearningStatus } from "../estimator/modelTrainingEngine";
+import { getTaipeiTimeInfo } from "../utils/taipeiTime";
 
 interface DepartureTimeRecommenderProps {
   estimatorOutput: FinalEstimatorOutput | null;
@@ -49,13 +50,11 @@ export default function DepartureTimeRecommender({
   const [originMileage, setOriginMileage] = useState<number>(direction === "S" ? 0.0 : 46.0);
   const [destMileage, setDestMileage] = useState<number>(direction === "S" ? 46.0 : 0.0);
 
-  // 自訂出發日期與時間 (年、月、日、時間)
-  const now = new Date();
-  const [selectedDateStr, setSelectedDateStr] = useState<string>(
-    `${now.getFullYear()}-${(now.getMonth() + 1).toString().padStart(2, "0")}-${now.getDate().toString().padStart(2, "0")}`
-  );
+  // 自訂出發日期與時間 (強制以台北標準時間為預設基準)
+  const initialTaipei = getTaipeiTimeInfo(new Date());
+  const [selectedDateStr, setSelectedDateStr] = useState<string>(initialTaipei.dateStr);
   const [selectedTimeStr, setSelectedTimeStr] = useState<string>(
-    `${now.getHours().toString().padStart(2, "0")}:${now.getMinutes().toString().padStart(2, "0")}`
+    `${String(initialTaipei.hour).padStart(2, "0")}:${String(initialTaipei.minute).padStart(2, "0")}`
   );
 
   // 模型自我演化狀態

@@ -16,6 +16,11 @@ import {
 import handleTdxSync from "./api/tdx/sync";
 import handleCctvStep from "./api/cctv/cross-validation/step";
 import handleTrafficOverview from "./api/traffic/overview";
+import {
+  detectTunnelPeakStatus,
+  getTaipeiTimeInfo,
+  isWeekendPeakTime as isWeekendPeakTimeUtil,
+} from "./src/utils/taipeiTime";
 
 // Lazy Upstash Redis Client with Safe Fallback
 let redisClient: Redis | null = null;
@@ -860,19 +865,9 @@ export function extractNorthEntranceVdData(vdPayload: any) {
   return extractDirectionalEntranceVdData(vdPayload, "N");
 }
 
-// 判定是否為週日或連假 13:00~21:00 尖峰時段 (台北時間)
-export function isWeekendPeakTime(date: Date = new Date()): boolean {
-  try {
-    const tzString = date.toLocaleString("en-US", { timeZone: "Asia/Taipei" });
-    const localDate = new Date(tzString);
-    const day = localDate.getDay(); // 0 = Sunday, 6 = Saturday
-    const hour = localDate.getHours();
-    return (day === 0 || day === 6) && hour >= 13 && hour <= 21;
-  } catch {
-    const day = date.getDay();
-    const hour = date.getHours();
-    return (day === 0 || day === 6) && hour >= 13 && hour <= 21;
-  }
+// 判定是否為週末或連假尖峰時段 (以台北時間與南下/北上方向動態判定)
+export function isWeekendPeakTime(date: Date = new Date(), direction: "N" | "S" = "N"): boolean {
+  return isWeekendPeakTimeUtil(date, direction);
 }
 
 async function startServer() {
