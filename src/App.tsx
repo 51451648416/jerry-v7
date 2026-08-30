@@ -11,6 +11,7 @@ import {
   ShieldAlert,
   MapPin,
   Database,
+  Zap,
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import Header, { ActiveTabType } from "./components/Header";
@@ -632,8 +633,23 @@ export default function App() {
               </div>
             </div>
 
-            {/* 若超過 2 分鐘未更新即時數據，跳轉至更新待命畫面 */}
-            {isStaleOverTwoMinutes ? (
+            {/* 若正在點擊分析/更新中，持續不顯示舊資料或車道封閉，僅保留頂部按鈕持續運轉與乾淨運算中狀態 */}
+            {isLoading ? (
+              <div className="bg-white border border-slate-200 p-8 sm:p-12 rounded-3xl shadow-xs text-center flex flex-col items-center justify-center space-y-4 my-2">
+                <div className="relative flex items-center justify-center">
+                  <div className="w-14 h-14 rounded-full border-3 border-emerald-100 border-t-emerald-600 animate-spin" />
+                  <Zap className="w-5 h-5 text-emerald-600 absolute animate-pulse" />
+                </div>
+                <div className="space-y-1.5 max-w-md mx-auto">
+                  <h3 className="text-base font-bold text-slate-800">
+                    正在同步交通部 TDX 即時實測數據
+                  </h3>
+                  <p className="text-xs text-slate-500 leading-relaxed">
+                    正在擷取雪山隧道全線 20 微元切片與 CCTV 影像，進行雙模態流速與車道阻抗運算，運算完成前暫不顯示舊數據...
+                  </p>
+                </div>
+              </div>
+            ) : isStaleOverTwoMinutes ? (
               <TwoMinuteStalePrompt
                 direction={direction}
                 onDirectionChange={handleDirectionChange}
@@ -651,7 +667,7 @@ export default function App() {
                 selectedVehicleMode={selectedVehicleMode}
                 onSelectVehicleMode={handleSelectVehicleMode}
               />
-            ) : (
+            ) : estimatorOutput ? (
               <div className="space-y-4">
                 {/* 隧道大尺寸標準橫斷面（剖面圖）＋ 頂部直接流速結論 */}
                 <TunnelCrossSectionView
@@ -685,6 +701,15 @@ export default function App() {
                   </div>
                 </div>
               </div>
+            ) : (
+              <TunnelEntranceCover
+                direction={direction}
+                estimatorOutput={estimatorOutput}
+                onStartAnalysis={() => fetchTdxAndEstimate(direction)}
+                isLoading={isLoading}
+                selectedVehicleMode={selectedVehicleMode}
+                onSelectVehicleMode={handleSelectVehicleMode}
+              />
             )}
           </div>
         )}

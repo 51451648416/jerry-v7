@@ -96,6 +96,20 @@ export default function TunnelCrossSectionView({
     };
   };
 
+  const isLane1ActuallyClosed = Boolean(
+    (estimatorOutput?.estimated_state?.laneComparison?.isLaneClosed &&
+      estimatorOutput?.estimated_state?.laneComparison?.closedLaneId === 1) ||
+    estimatorOutput?.estimated_state?.laneComparison?.lane1?.isClosed ||
+    estimatorOutput?.estimated_state?.laneComparison?.activeDiagnosisTag?.includes("全線雙車道封閉")
+  );
+
+  const isLane2ActuallyClosed = Boolean(
+    (estimatorOutput?.estimated_state?.laneComparison?.isLaneClosed &&
+      estimatorOutput?.estimated_state?.laneComparison?.closedLaneId === 2) ||
+    estimatorOutput?.estimated_state?.laneComparison?.lane2?.isClosed ||
+    estimatorOutput?.estimated_state?.laneComparison?.activeDiagnosisTag?.includes("全線雙車道封閉")
+  );
+
   const lane1Info = getSpeedColorInfo(lane1Speed);
   const lane2Info = getSpeedColorInfo(lane2Speed);
 
@@ -150,25 +164,25 @@ export default function TunnelCrossSectionView({
             <div className="text-xs sm:text-sm text-slate-300 flex flex-wrap items-center gap-x-3 gap-y-1.5 pt-0.5">
               <span className="flex items-center gap-1.5">
                 👈 內側：
-                {lane1Speed === 0 ? (
+                {isLane1ActuallyClosed ? (
                   <strong className="text-rose-400 font-mono font-extrabold text-sm sm:text-base">⛔ 車道封閉 (0.0 km/h)</strong>
                 ) : (
-                  <strong className="text-indigo-400 font-mono font-extrabold text-sm sm:text-base">{lane1Speed.toFixed(1)} km/h</strong>
+                  <strong className="text-indigo-400 font-mono font-extrabold text-sm sm:text-base">{lane1Speed > 0 ? `${lane1Speed.toFixed(1)} km/h` : "-- km/h"}</strong>
                 )}
                 <span className="bg-slate-800 text-slate-300 px-2 py-0.5 rounded font-mono text-xs border border-slate-700">
-                  耗時 <strong className={lane1Speed === 0 ? "text-rose-400 font-bold" : "text-emerald-400 font-bold"}>{lane1Speed === 0 ? "⛔ 封閉" : lane1TimeFormatted}</strong>
+                  耗時 <strong className={isLane1ActuallyClosed ? "text-rose-400 font-bold" : "text-emerald-400 font-bold"}>{isLane1ActuallyClosed ? "⛔ 封閉" : lane1TimeFormatted}</strong>
                 </span>
               </span>
               <span className="text-slate-600 hidden sm:inline">|</span>
               <span className="flex items-center gap-1.5">
                 👉 外側：
-                {lane2Speed === 0 ? (
+                {isLane2ActuallyClosed ? (
                   <strong className="text-rose-400 font-mono font-extrabold text-sm sm:text-base">⛔ 車道封閉 (0.0 km/h)</strong>
                 ) : (
-                  <strong className="text-amber-400 font-mono font-extrabold text-sm sm:text-base">{lane2Speed.toFixed(1)} km/h</strong>
+                  <strong className="text-amber-400 font-mono font-extrabold text-sm sm:text-base">{lane2Speed > 0 ? `${lane2Speed.toFixed(1)} km/h` : "-- km/h"}</strong>
                 )}
                 <span className="bg-slate-800 text-slate-300 px-2 py-0.5 rounded font-mono text-xs border border-slate-700">
-                  耗時 <strong className={lane2Speed === 0 ? "text-rose-400 font-bold" : "text-amber-300 font-bold"}>{lane2Speed === 0 ? "⛔ 封閉" : lane2TimeFormatted}</strong>
+                  耗時 <strong className={isLane2ActuallyClosed ? "text-rose-400 font-bold" : "text-amber-300 font-bold"}>{isLane2ActuallyClosed ? "⛔ 封閉" : lane2TimeFormatted}</strong>
                 </span>
               </span>
               {!isBothLanesEqual && speedDiff > 0 ? (
@@ -178,7 +192,7 @@ export default function TunnelCrossSectionView({
                 </span>
               ) : (
                 <span className="bg-teal-500/20 text-teal-300 border border-teal-500/30 px-2 py-0.5 rounded-md font-bold text-xs">
-                  {lane1Speed === 0 || lane2Speed === 0 ? "⚠️ 包含車道封閉管制" : `時間差僅 ${diffSec} 秒（小於 10 秒）・兩邊都可以`}
+                  {isLane1ActuallyClosed || isLane2ActuallyClosed ? "⚠️ 包含車道封閉管制" : `時間差僅 ${diffSec} 秒（小於 10 秒）・兩邊都可以`}
                 </span>
               )}
             </div>
@@ -443,15 +457,17 @@ export default function TunnelCrossSectionView({
                 {isBothLanesEqual ? "★ 兩邊皆可順行" : "★ 推薦行駛車道"}
               </text>
             )}
-            <text x="0" y="2" fill="#ffffff" fontSize={lane1Speed === 0 ? "20" : "26"} fontFamily="monospace" fontWeight="900" textAnchor="middle">
-              {lane1Speed > 0 ? (
+            <text x="0" y="2" fill="#ffffff" fontSize={isLane1ActuallyClosed ? "20" : "26"} fontFamily="monospace" fontWeight="900" textAnchor="middle">
+              {!isLane1ActuallyClosed && lane1Speed > 0 ? (
                 <>{lane1Speed.toFixed(1)} <tspan fontSize="13" fill="#94a3b8">km/h</tspan></>
-              ) : (
+              ) : isLane1ActuallyClosed ? (
                 <tspan fill="#f43f5e">⛔ 封閉 (0.0 km/h)</tspan>
+              ) : (
+                <>{lane1Speed.toFixed(1)} <tspan fontSize="13" fill="#94a3b8">km/h</tspan></>
               )}
             </text>
-            <text x="0" y="22" fill={lane1Speed === 0 ? "#f43f5e" : lane1Info.hex} fontSize="11" fontWeight="bold" textAnchor="middle">
-              {lane1Speed === 0 ? "⛔ 車道封閉管制" : `${lane1Info.label}狀態・約 ${lane1TimeFormatted}`}
+            <text x="0" y="22" fill={isLane1ActuallyClosed ? "#f43f5e" : lane1Info.hex} fontSize="11" fontWeight="bold" textAnchor="middle">
+              {isLane1ActuallyClosed ? "⛔ 車道封閉管制" : `${lane1Info.label}狀態・約 ${lane1TimeFormatted}`}
             </text>
           </g>
 
@@ -464,7 +480,7 @@ export default function TunnelCrossSectionView({
               height="68"
               rx="14"
               fill="#0f172a"
-              stroke={lane2Speed === 0 ? "#f43f5e" : lane2Info.hex}
+              stroke={isLane2ActuallyClosed ? "#f43f5e" : lane2Info.hex}
               strokeWidth={isLane2Faster || isBothLanesEqual ? "3.5" : "1.5"}
             />
             {(isLane2Faster || isBothLanesEqual) && (
@@ -475,15 +491,17 @@ export default function TunnelCrossSectionView({
                 {isBothLanesEqual ? "★ 兩邊皆可順行" : "★ 推薦行駛車道"}
               </text>
             )}
-            <text x="0" y="2" fill="#ffffff" fontSize={lane2Speed === 0 ? "20" : "26"} fontFamily="monospace" fontWeight="900" textAnchor="middle">
-              {lane2Speed > 0 ? (
+            <text x="0" y="2" fill="#ffffff" fontSize={isLane2ActuallyClosed ? "20" : "26"} fontFamily="monospace" fontWeight="900" textAnchor="middle">
+              {!isLane2ActuallyClosed && lane2Speed > 0 ? (
                 <>{lane2Speed.toFixed(1)} <tspan fontSize="13" fill="#94a3b8">km/h</tspan></>
-              ) : (
+              ) : isLane2ActuallyClosed ? (
                 <tspan fill="#f43f5e">⛔ 封閉 (0.0 km/h)</tspan>
+              ) : (
+                <>{lane2Speed.toFixed(1)} <tspan fontSize="13" fill="#94a3b8">km/h</tspan></>
               )}
             </text>
-            <text x="0" y="22" fill={lane2Speed === 0 ? "#f43f5e" : lane2Info.hex} fontSize="11" fontWeight="bold" textAnchor="middle">
-              {lane2Speed === 0 ? "⛔ 車道封閉管制" : `${lane2Info.label}狀態・約 ${lane2TimeFormatted}`}
+            <text x="0" y="22" fill={isLane2ActuallyClosed ? "#f43f5e" : lane2Info.hex} fontSize="11" fontWeight="bold" textAnchor="middle">
+              {isLane2ActuallyClosed ? "⛔ 車道封閉管制" : `${lane2Info.label}狀態・約 ${lane2TimeFormatted}`}
             </text>
           </g>
 
@@ -518,15 +536,15 @@ export default function TunnelCrossSectionView({
               )}
             </span>
             <span
-              className={`px-2 py-0.5 rounded-full font-mono font-bold text-[11px] ${lane1Speed === 0 ? "bg-rose-900/50 text-rose-300" : `${lane1Info.lightBg} ${lane1Info.text}`}`}
+              className={`px-2 py-0.5 rounded-full font-mono font-bold text-[11px] ${isLane1ActuallyClosed ? "bg-rose-900/50 text-rose-300" : `${lane1Info.lightBg} ${lane1Info.text}`}`}
             >
-              {lane1Speed === 0 ? "⛔ 車道封閉 (0.0 km/h)" : `${lane1Speed.toFixed(1)} km/h (${lane1Info.label})`}
+              {isLane1ActuallyClosed ? "⛔ 車道封閉 (0.0 km/h)" : `${lane1Speed.toFixed(1)} km/h (${lane1Info.label})`}
             </span>
           </div>
           <div className="text-[11px] text-slate-400 flex justify-between">
             <span>預估全線通過耗時：</span>
-            <span className={`font-mono font-bold ${lane1Speed === 0 ? "text-rose-400" : "text-white"}`}>
-              {lane1Speed === 0 ? "⛔ 車道封閉" : lane1TimeFormatted}
+            <span className={`font-mono font-bold ${isLane1ActuallyClosed ? "text-rose-400" : "text-white"}`}>
+              {isLane1ActuallyClosed ? "⛔ 車道封閉" : lane1TimeFormatted}
             </span>
           </div>
         </div>
@@ -550,15 +568,15 @@ export default function TunnelCrossSectionView({
               )}
             </span>
             <span
-              className={`px-2 py-0.5 rounded-full font-mono font-bold text-[11px] ${lane2Speed === 0 ? "bg-rose-900/50 text-rose-300" : `${lane2Info.lightBg} ${lane2Info.text}`}`}
+              className={`px-2 py-0.5 rounded-full font-mono font-bold text-[11px] ${isLane2ActuallyClosed ? "bg-rose-900/50 text-rose-300" : `${lane2Info.lightBg} ${lane2Info.text}`}`}
             >
-              {lane2Speed === 0 ? "⛔ 車道封閉 (0.0 km/h)" : `${lane2Speed.toFixed(1)} km/h (${lane2Info.label})`}
+              {isLane2ActuallyClosed ? "⛔ 車道封閉 (0.0 km/h)" : `${lane2Speed.toFixed(1)} km/h (${lane2Info.label})`}
             </span>
           </div>
           <div className="text-[11px] text-slate-400 flex justify-between">
             <span>預估全線通過耗時：</span>
-            <span className={`font-mono font-bold ${lane2Speed === 0 ? "text-rose-400" : "text-white"}`}>
-              {lane2Speed === 0 ? "⛔ 車道封閉" : lane2TimeFormatted}
+            <span className={`font-mono font-bold ${isLane2ActuallyClosed ? "text-rose-400" : "text-white"}`}>
+              {isLane2ActuallyClosed ? "⛔ 車道封閉" : lane2TimeFormatted}
             </span>
           </div>
         </div>
