@@ -178,7 +178,8 @@ export function diagnoseLaneStatus(
   },
   prevVd?: any,
   macroSpeedKmh: number = 80.0,
-  cctvRecord?: CameraAiInspectionRecord | CctvVisionAnalysisResult | any
+  cctvRecord?: CameraAiInspectionRecord | CctvVisionAnalysisResult | any,
+  laneClosureContext?: { isLane1AllZero?: boolean; isLane2AllZero?: boolean }
 ): LaneDiagnosisResult {
   const vdId = (vd as any).detectorId || (vd as any).vdId || `VD-${(vd as any).mileageKm?.toFixed(1) || "0"}`;
   const mileageKm = typeof (vd as any).mileageKm === "number" ? (vd as any).mileageKm : 18.0;
@@ -211,8 +212,11 @@ export function diagnoseLaneStatus(
   const delta_V = v1 - v2;
   const speedDelta = delta_V;
 
-  // 1. 車道封閉檢測 (全線/單線 0 km/h 且 0 流量)
-  if (v1 === 0 && flow1 === 0 && v2 === 0 && flow2 === 0) {
+  // 1. 車道封閉檢測 (嚴格準則：必須該車道全線/所有偵測器皆為 0 才能判定為封閉管制，絕不因單一偵測器兩邊剛好為 0 誤判為車道封閉)
+  const isCorridorLane1AllZero = Boolean(laneClosureContext?.isLane1AllZero);
+  const isCorridorLane2AllZero = Boolean(laneClosureContext?.isLane2AllZero);
+
+  if (isCorridorLane1AllZero && isCorridorLane2AllZero) {
     return {
       vdId,
       mileageKm,
@@ -223,7 +227,7 @@ export function diagnoseLaneStatus(
       speedDeltaKmh: 0,
       status: "ALL_CLOSED",
       statusLabel: "⛔ 全線雙車道封閉",
-      description: "雙車道流速流量皆為 0，已判定為全線封閉管制",
+      description: "雙車道全線流速流量皆為 0，已判定為全線封閉管制",
       recommendedLane: null,
       recommendedLaneId: null,
       recommendedLaneTag: "全線封閉",
@@ -238,7 +242,7 @@ export function diagnoseLaneStatus(
     };
   }
 
-  if (v1 === 0 && flow1 === 0 && (v2 > 0 || flow2 > 0)) {
+  if (isCorridorLane1AllZero) {
     return {
       vdId,
       mileageKm,
@@ -249,7 +253,7 @@ export function diagnoseLaneStatus(
       speedDeltaKmh: v2,
       status: "LANE1_CLOSED",
       statusLabel: "⛔ 內側車道封閉",
-      description: "內側車道流速流量皆為 0，唯一開放外側車道",
+      description: "內側車道全線流速流量皆為 0，唯一開放外側車道",
       recommendedLane: "外側車道",
       recommendedLaneId: 2,
       recommendedLaneTag: "推薦走外側",
@@ -265,7 +269,7 @@ export function diagnoseLaneStatus(
     };
   }
 
-  if (v2 === 0 && flow2 === 0 && (v1 > 0 || flow1 > 0)) {
+  if (isCorridorLane2AllZero) {
     return {
       vdId,
       mileageKm,
@@ -276,13 +280,99 @@ export function diagnoseLaneStatus(
       speedDeltaKmh: v1,
       status: "LANE2_CLOSED",
       statusLabel: "⛔ 外側車道封閉",
-      description: "外側車道流速流量皆為 0，唯一開放內側車道",
+      description: "外側車道全線流速流量皆為 0，唯一開放內側車道",
       recommendedLane: "內側車道",
       recommendedLaneId: 1,
       recommendedLaneTag: "推薦走內側",
       isClosed: true,
       closedLaneId: 2,
       triggeredThresholdLabel: "外側流量流速為0 (外側封閉)",
+      spatialHeadwayMeters,
+      spatialSpeedGradient,
+      spaceHeadwayLane1Meters: Number(hs1.toFixed(1)),
+      spaceHeadwayLane2Meters: 0,
+      relativeSpeedDeltaKmh: v1,
+      quadrantTrigger: null,
+    };
+  }
+
+  // 若單一偵測器兩邊剛好為 0（但全線其他偵測器有正常數據），判定為單點暫態無車流/停等，絕不標記為車道封閉
+  if (v1 === 0 && flow1 === 0 && v2 === 0 && flow2 === 0) {
+    return {
+      vdId,
+      mileageKm,
+      innerSpeedKmh: 0,
+      outerSpeedKmh: 0,
+      innerFlowVehPerHour: 0,
+      outerFlowVehPerHour: 0,
+      speedDeltaKmh: 0,
+      status: "NORMAL_BALANCED",
+      statusLabel: "雙車道單點無車流",
+      description: "此偵測站即時無車流通過（單點讀數，非車道封閉）",
+      recommendedLane: null,
+      recommendedLaneId: null,
+      recommendedLaneTag: "兩邊皆可",
+      isClosed: false,
+      triggeredThresholdLabel: "單點無車流 (非封閉)",
+      spatialHeadwayMeters,
+      spatialSpeedGradient,
+      spaceHeadwayLane1Meters: 0,
+      spaceHeadwayLane2Meters: 0,
+      relativeSpeedDeltaKmh: 0,
+      quadrantTrigger: null,
+    };
+  }
+
+  // 若單一偵測器僅內側為 0（但內側全線並非皆為 0），判定為單點內側暫無車流或低速
+  if (v1 === 0 && flow1 === 0 && (v2 > 0 || flow2 > 0)) {
+    return {
+      vdId,
+      mileageKm,
+      innerSpeedKmh: 0,
+      outerSpeedKmh: v2,
+      innerFlowVehPerHour: 0,
+      outerFlowVehPerHour: flow2,
+      speedDeltaKmh: v2,
+      status: "INNER_TURTLE_LANE",
+      statusLabel: "🐢 內側單點低速/暫無車流",
+      description: "內側車道此偵測站暫無流速，外側流速正常，建議先行駛外側",
+      recommendedLane: "外側車道",
+      recommendedLaneId: 2,
+      recommendedLaneTag: "推薦走外側",
+      isClosed: false,
+      turtleLaneId: 1,
+      suppressedSpeedKmh: MIN_PHYSICAL_CRAWL_SPEED_KMH,
+      normalSpeedKmh: v2 > 0 ? v2 : 75,
+      triggeredThresholdLabel: "內側單點低速 (非封閉)",
+      spatialHeadwayMeters,
+      spatialSpeedGradient,
+      spaceHeadwayLane1Meters: 0,
+      spaceHeadwayLane2Meters: Number(hs2.toFixed(1)),
+      relativeSpeedDeltaKmh: -v2,
+      quadrantTrigger: null,
+    };
+  }
+
+  // 若單一偵測器僅外側為 0（但外側全線並非皆為 0），判定為單點外側暫無車流或低速
+  if (v2 === 0 && flow2 === 0 && (v1 > 0 || flow1 > 0)) {
+    return {
+      vdId,
+      mileageKm,
+      innerSpeedKmh: v1,
+      outerSpeedKmh: 0,
+      innerFlowVehPerHour: flow1,
+      outerFlowVehPerHour: 0,
+      speedDeltaKmh: v1,
+      status: "OUTER_SLOW_HEAVY_SUPPRESSION",
+      statusLabel: "⚠️ 外側單點低速/暫無車流",
+      description: "外側車道此偵測站暫無流速，內側流速正常，建議先行駛內側",
+      recommendedLane: "內側車道",
+      recommendedLaneId: 1,
+      recommendedLaneTag: "推薦走內側",
+      isClosed: false,
+      suppressedSpeedKmh: MIN_PHYSICAL_CRAWL_SPEED_KMH,
+      normalSpeedKmh: v1 > 0 ? v1 : 75,
+      triggeredThresholdLabel: "外側單點低速 (非封閉)",
       spatialHeadwayMeters,
       spatialSpeedGradient,
       spaceHeadwayLane1Meters: Number(hs1.toFixed(1)),
@@ -1330,6 +1420,12 @@ export function runVdTrafficEstimator(
   }
 
   // 雙車道即時診斷與高階車流流體力學超敏辨識 (Traffic Fluid Dynamics & Lane Diagnoses)
+  // 檢測車道是否全為 0 (只有整條車道所有偵測器速度皆為 0 才是該車道封閉)
+  const initialLane1Speeds = validatedRecords.map((d) => d.lanes[0]?.speedKmh || 0);
+  const isCorridorLane1AllZero = initialLane1Speeds.length > 0 && initialLane1Speeds.every((s) => s === 0);
+  const isCorridorLane2AllZero = validatedRecords.length > 0 && validatedRecords.every((d) => (d.lanes[1]?.speedKmh ?? 0) === 0);
+  const corridorLaneClosureContext = { isLane1AllZero: isCorridorLane1AllZero, isLane2AllZero: isCorridorLane2AllZero };
+
   const macroSpeedKmh = calculateMacroSpeedKmh(
     validatedRecords.map((d) => ({
       speedKmh: d.lanes.reduce((acc, l) => acc + (l.speedKmh || 0), 0) / (d.lanes.length || 1),
@@ -1352,7 +1448,7 @@ export function runVdTrafficEstimator(
         )
       : undefined;
 
-    const diag = diagnoseLaneStatus(vd, prevVd, macroSpeedKmh, matchedCctv);
+    const diag = diagnoseLaneStatus(vd, prevVd, macroSpeedKmh, matchedCctv, corridorLaneClosureContext);
     laneDiagnoses.push(diag);
   }
 
@@ -1732,11 +1828,10 @@ export function runVdTrafficEstimator(
   let activeDiagnosisTag = "雙車道流速均衡";
   let recommendedLaneTag: "推薦走外側" | "推薦走內側" | "兩邊皆可" | "全線封閉" = "兩邊皆可";
 
-  const closedAllDiag = laneDiagnoses.find((d) => d.status === "ALL_CLOSED");
-  const closedSingleDiag = laneDiagnoses.find((d) => d.status === "LANE1_CLOSED" || d.status === "LANE2_CLOSED");
   const innerTurtleDiag = laneDiagnoses.find((d) => d.status === "INNER_TURTLE_LANE");
   const outerSlowDiag = laneDiagnoses.find((d) => d.status === "OUTER_SLOW_HEAVY_SUPPRESSION");
 
+  // 嚴格判定：必須整條車道全部偵測器皆為 0 才能判定為該車道封閉管制，絕不因單一偵測器兩邊為 0 誤判封閉
   if (isLane1AllZero && isLane2AllZero) {
     activeDiagnosisTag = "⛔ 全線雙車道封閉";
     recommendedLaneTag = "全線封閉";
@@ -1746,12 +1841,6 @@ export function runVdTrafficEstimator(
   } else if (isLane2AllZero) {
     activeDiagnosisTag = "⛔ 外側車道封閉";
     recommendedLaneTag = "推薦走內側";
-  } else if (closedAllDiag) {
-    activeDiagnosisTag = closedAllDiag.statusLabel;
-    recommendedLaneTag = closedAllDiag.recommendedLaneTag;
-  } else if (closedSingleDiag) {
-    activeDiagnosisTag = `${closedSingleDiag.vdId} ${closedSingleDiag.statusLabel}`;
-    recommendedLaneTag = closedSingleDiag.recommendedLaneTag;
   } else if (innerTurtleDiag) {
     activeDiagnosisTag = innerTurtleDiag.triggeredThresholdLabel || `🐢 內側烏龜車道 (${innerTurtleDiag.vdId} ΔV: ${innerTurtleDiag.speedDeltaKmh.toFixed(1)} km/h)`;
     recommendedLaneTag = "推薦走外側";

@@ -21,7 +21,7 @@ export default function SpeedometerGauge({
   laneArrowColor = "emerald",
   isClosed = false,
 }: SpeedometerGaugeProps) {
-  const isLaneActuallyClosed = isClosed || speedKmh === 0;
+  const isLaneActuallyClosed = Boolean(isClosed);
 
   // 限制顯示角度：-135 度 (0 km/h) 到 +135 度 (120 km/h) -> 總夾角 270 度
   const clampedSpeed = Math.max(0, Math.min(speedKmh, maxSpeed));
