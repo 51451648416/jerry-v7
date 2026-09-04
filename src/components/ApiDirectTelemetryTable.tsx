@@ -45,6 +45,13 @@ export default function ApiDirectTelemetryTable({
     directApiDisplay,
   } = doubleVerification;
 
+  const isLane1AllZero =
+    directApiDisplay.vdReadings.length > 0 &&
+    directApiDisplay.vdReadings.every((vd) => vd.lane1SpeedKmh === 0);
+  const isLane2AllZero =
+    directApiDisplay.vdReadings.length > 0 &&
+    directApiDisplay.vdReadings.every((vd) => vd.lane2SpeedKmh === 0);
+
   const filteredVd = directApiDisplay.vdReadings.filter(
     (vd) =>
       vd.detectorId.toLowerCase().includes(filterQuery.toLowerCase()) ||
@@ -233,32 +240,47 @@ export default function ApiDirectTelemetryTable({
                     const isExtremeSpot = vd.speedDeltaKmh > 23.0;
                     const isLane1Zero = vd.lane1SpeedKmh === 0;
                     const isLane2Zero = vd.lane2SpeedKmh === 0;
+                    const isRowEntirelyClosed = (isLane1Zero && isLane1AllZero) || (isLane2Zero && isLane2AllZero);
                     return (
                       <tr
                         key={vd.detectorId}
                         className={`hover:bg-slate-50 transition ${
-                          isExtremeSpot || isLane1Zero || isLane2Zero ? "bg-rose-50/60 font-semibold" : ""
+                          isRowEntirelyClosed
+                            ? "bg-rose-50/70 font-semibold"
+                            : isExtremeSpot
+                            ? "bg-amber-50/40 font-semibold"
+                            : ""
                         }`}
                       >
                         <td className="py-2 px-3 text-slate-900 font-bold">{vd.detectorId}</td>
                         <td className="py-2 px-3 text-slate-600">{vd.mileageKm.toFixed(3)} K</td>
                         <td className="py-2 px-3 text-indigo-700 font-bold">
                           {isLane1Zero ? (
-                            <span className="text-rose-600">⛔ 封閉 (0.0 km/h)</span>
+                            isLane1AllZero ? (
+                              <span className="text-rose-600">⛔ 封閉 (0.0 km/h)</span>
+                            ) : (
+                              <span className="text-slate-400 font-mono">0.0 km/h</span>
+                            )
                           ) : (
                             `${vd.lane1SpeedKmh.toFixed(1)} km/h`
                           )}
                         </td>
                         <td className="py-2 px-3 text-amber-700 font-bold">
                           {isLane2Zero ? (
-                            <span className="text-rose-600">⛔ 封閉 (0.0 km/h)</span>
+                            isLane2AllZero ? (
+                              <span className="text-rose-600">⛔ 封閉 (0.0 km/h)</span>
+                            ) : (
+                              <span className="text-slate-400 font-mono">0.0 km/h</span>
+                            )
                           ) : (
                             `${vd.lane2SpeedKmh.toFixed(1)} km/h`
                           )}
                         </td>
                         <td
                           className={`py-2 px-3 font-bold ${
-                            isExtremeSpot || isLane1Zero !== isLane2Zero
+                            isRowEntirelyClosed
+                              ? "text-rose-600 bg-rose-100/80 px-2 py-0.5 rounded-sm"
+                              : isExtremeSpot
                               ? "text-rose-600 bg-rose-100/80 px-2 py-0.5 rounded-sm"
                               : vd.speedDeltaKmh > 10
                               ? "text-amber-600"
@@ -274,17 +296,25 @@ export default function ApiDirectTelemetryTable({
                           {vd.lane1OccupancyPercent.toFixed(1)}% / {vd.lane2OccupancyPercent.toFixed(1)}%
                         </td>
                         <td className="py-2 px-3 text-center">
-                          {isLane1Zero && isLane2Zero ? (
+                          {isLane1AllZero && isLane2AllZero ? (
                             <span className="px-2 py-0.5 rounded-full text-[10px] bg-rose-700 text-white font-sans font-bold">
                               ⛔ 全線封閉
                             </span>
-                          ) : isLane1Zero ? (
+                          ) : isLane1AllZero ? (
                             <span className="px-2 py-0.5 rounded-full text-[10px] bg-rose-600 text-white font-sans font-bold">
                               ⛔ 內側封閉
                             </span>
-                          ) : isLane2Zero ? (
+                          ) : isLane2AllZero ? (
                             <span className="px-2 py-0.5 rounded-full text-[10px] bg-rose-600 text-white font-sans font-bold">
                               ⛔ 外側封閉
+                            </span>
+                          ) : isLane1Zero && isLane2Zero ? (
+                            <span className="px-2 py-0.5 rounded-full text-[10px] bg-slate-200 text-slate-700 font-sans font-medium">
+                              單點無車流
+                            </span>
+                          ) : isLane1Zero || isLane2Zero ? (
+                            <span className="px-2 py-0.5 rounded-full text-[10px] bg-slate-200 text-slate-700 font-sans font-medium">
+                              單點停滯
                             </span>
                           ) : isExtremeSpot ? (
                             <span className="px-2 py-0.5 rounded-full text-[10px] bg-rose-600 text-white font-sans font-bold">
