@@ -1,6 +1,12 @@
 {
-  "buildCommand": "vite build",
+  "framework": "vite",
   "outputDirectory": "dist",
+  "functions": {
+    "api/**/*.ts": {
+      "runtime": "nodejs18.x",
+      "maxDuration": 10
+    }
+  },
   "rewrites": [
     { "source": "/((?!api/.*).*)", "destination": "/index.html" }
   ]
