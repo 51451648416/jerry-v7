@@ -167,29 +167,50 @@ async function fetchFastCctvSnapshot(candidateUrls: string[]): Promise<Buffer> {
 
       const reader = response.body.getReader();
       const chunks: Buffer[] = [];
+      let totalLength = 0;
 
       try {
         while (true) {
           const { done, value } = await reader.read();
           if (done) break;
-          if (value) {
-            chunks.push(Buffer.isBuffer(value) ? value : Buffer.from(value));
-          }
+          if (value && value.length > 0) {
+            const buf = Buffer.isBuffer(value) ? value : Buffer.from(value);
+            chunks.push(buf);
+            totalLength += buf.length;
 
+            // 僅在當前 chunk 含有 0xd9 (潛在 JPEG 檔尾 EOI) 且已累積合理長度時才進行單次拼接檢驗，避免每 chunk 重複 Buffer.concat
+            const hasPotentialEoi = buf.includes(0xd9);
+
+            if (hasPotentialEoi && totalLength > 4096) {
+              const combined = Buffer.concat(chunks);
+              const startIdx = combined.indexOf(Buffer.from([0xff, 0xd8]));
+              if (startIdx !== -1) {
+                const endIdx = combined.indexOf(Buffer.from([0xff, 0xd9]), startIdx + 2);
+                if (endIdx !== -1) {
+                  await reader.cancel();
+                  clearTimeout(timeoutId);
+                  return combined.subarray(startIdx, endIdx + 2);
+                }
+              }
+            }
+
+            if (totalLength > 1024 * 1024) {
+              await reader.cancel();
+              break;
+            }
+          }
+        }
+
+        // 串流讀取結束後的單次保底檢查
+        if (chunks.length > 0) {
           const combined = Buffer.concat(chunks);
           const startIdx = combined.indexOf(Buffer.from([0xff, 0xd8]));
           if (startIdx !== -1) {
             const endIdx = combined.indexOf(Buffer.from([0xff, 0xd9]), startIdx + 2);
             if (endIdx !== -1) {
-              await reader.cancel();
               clearTimeout(timeoutId);
               return combined.subarray(startIdx, endIdx + 2);
             }
-          }
-
-          if (combined.length > 1024 * 1024) {
-            await reader.cancel();
-            break;
           }
         }
       } finally {

@@ -72,17 +72,23 @@ async function fetchCctvImageWithRetry(urls: string[], maxRetries = 1): Promise<
             const { done, value } = await reader.read();
             if (done) break;
             if (value && value.length > 0) {
-              chunks.push(Buffer.isBuffer(value) ? value : Buffer.from(value));
-              totalLength += value.length;
+              const buf = Buffer.isBuffer(value) ? value : Buffer.from(value);
+              chunks.push(buf);
+              totalLength += buf.length;
 
-              const combined = Buffer.concat(chunks);
-              const startIdx = combined.indexOf(Buffer.from([0xff, 0xd8]));
-              if (startIdx !== -1) {
-                const endIdx = combined.indexOf(Buffer.from([0xff, 0xd9]), startIdx + 2);
-                if (endIdx !== -1) {
-                  frameBuffer = combined.subarray(startIdx, endIdx + 2);
-                  await reader.cancel();
-                  break;
+              // 僅在當前 chunk 含有 0xd9 (潛在 JPEG 檔尾 EOI) 且已累積合理長度時才進行單次拼接檢驗
+              const hasPotentialEoi = buf.includes(0xd9);
+
+              if (hasPotentialEoi && totalLength > 4096) {
+                const combined = Buffer.concat(chunks);
+                const startIdx = combined.indexOf(Buffer.from([0xff, 0xd8]));
+                if (startIdx !== -1) {
+                  const endIdx = combined.indexOf(Buffer.from([0xff, 0xd9]), startIdx + 2);
+                  if (endIdx !== -1) {
+                    frameBuffer = combined.subarray(startIdx, endIdx + 2);
+                    await reader.cancel();
+                    break;
+                  }
                 }
               }
 

@@ -88,13 +88,33 @@ export default function CctvMultiCameraInspector({
     }
   };
 
-  // 初始化與每 10 秒輕量輪詢快取與隊列狀態
+  // 初始化與每 60 秒輕量輪詢快取與隊列狀態 (具備分頁可見度保護)
   useEffect(() => {
     fetchInspectionState(true);
+
     const interval = setInterval(() => {
+      // 若使用者切換分頁離開，立即停止發送背景輪詢請求以保護 Netlify Active CPU
+      if (typeof document !== "undefined" && document.hidden) return;
       fetchInspectionState(false);
-    }, 8000);
-    return () => clearInterval(interval);
+    }, 60000);
+
+    const handleVisibilityChange = () => {
+      if (typeof document !== "undefined" && !document.hidden) {
+        // 使用者重新回到分頁時，立即單次同步最新狀態
+        fetchInspectionState(false);
+      }
+    };
+
+    if (typeof document !== "undefined") {
+      document.addEventListener("visibilitychange", handleVisibilityChange);
+    }
+
+    return () => {
+      clearInterval(interval);
+      if (typeof document !== "undefined") {
+        document.removeEventListener("visibilitychange", handleVisibilityChange);
+      }
+    };
   }, []);
 
   // 本機秒數平滑倒數計時器 (每秒更新 TTL)
