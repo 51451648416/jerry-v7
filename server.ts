@@ -1489,7 +1489,7 @@ async function startServer() {
   const handleFreewayVd = async (req: express.Request, res: express.Response) => {
     try {
       const tdxUrl =
-        "https://tdx.transportdata.tw/api/basic/v2/Road/Traffic/Live/VD/Freeway?$filter=startswith(VDID,%20%27VD-N5%27)&$format=JSON";
+        "https://tdx.transportdata.tw/api/basic/v2/Road/Traffic/Live/VD/Freeway?$filter=startswith(VDID,%20'VD-N5')&$format=JSON";
 
       let rawData: any = null;
       try {
@@ -1655,7 +1655,7 @@ async function startServer() {
       const direction: "N" | "S" = String(req.query.direction || "N").toUpperCase() === "S" ? "S" : "N";
       const config = DIRECTION_CCTV_CONFIGS[direction];
       const tdxUrl =
-        "https://tdx.transportdata.tw/api/basic/v2/Road/Traffic/Live/VD/Freeway?$filter=startswith(VDID,%20%27VD-N5%27)&$format=JSON";
+        "https://tdx.transportdata.tw/api/basic/v2/Road/Traffic/Live/VD/Freeway?$filter=startswith(VDID,%20'VD-N5')&$format=JSON";
       const result = await globalTdxKeyManager.executeWithFailover<any>(tdxUrl);
       const data = extractDirectionalEntranceVdData(result.data, direction);
       const isWeekendPeak = isWeekendPeakTime();
@@ -1717,7 +1717,7 @@ async function startServer() {
     try {
       // TDX API: 國道即時路況事件端點
       const tdxEventsUrl =
-        "https://tdx.transportdata.tw/api/basic/v2/Road/Traffic/Live/LiveEvent/Freeway?$filter=contains(Location/FreeExpressHighway/Road,%20%27國道5號%27)&$format=JSON";
+        "https://tdx.transportdata.tw/api/basic/v2/Road/Traffic/Live/LiveEvent/Freeway?$filter=contains(Location/FreeExpressHighway/Road,%20'國道5號')&$format=JSON";
 
       try {
         const result = await globalTdxKeyManager.executeWithFailover<any>(tdxEventsUrl);

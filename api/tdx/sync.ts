@@ -153,6 +153,7 @@ async function fetchTdxDataWithFailover<T>(
   redis: Redis | null,
   startIndex = 0
 ): Promise<{ data: T; keyUsed: string }> {
+  console.log("[TDX Sync] 發送請求 URL:", url);
   let lastError: any = null;
 
   for (let i = 0; i < keyPool.length; i++) {
@@ -174,6 +175,26 @@ async function fetchTdxDataWithFailover<T>(
           signal: controller.signal,
         });
 
+        // 若回傳 404 (找不到資源)，優雅降級為空資料，嚴禁輪替金鑰重試或引發死循環
+        if (response.status === 404) {
+          console.warn(`[TDX Sync] 端點回傳 404 (Resource Not Found)，優雅降級為空資料，不輪替金鑰: ${url}`);
+          let emptyData: any = {};
+          if (url.includes("LiveEvent") || url.includes("Incident")) {
+            emptyData = { UpdateTime: new Date().toISOString(), UpdateInterval: 300, LiveEvents: [] };
+          } else if (url.includes("RampMetering")) {
+            emptyData = [];
+          } else if (url.includes("VD")) {
+            emptyData = { VDLives: [] };
+          }
+          return { data: emptyData as T, keyUsed: key.label };
+        }
+
+        // 若收到 HTTP 429 限流，嚴禁在此次請求內繼續輪轉其他金鑰（避免所有金鑰在同一秒內被全數封鎖）
+        if (response.status === 429) {
+          console.warn(`[TDX Sync] 遭遇 HTTP 429 API rate limit exceeded，停止金鑰輪替，直接中斷請求: ${url}`);
+          throw new Error("TDX API Rate Limit Exceeded (HTTP 429)");
+        }
+
         if (!response.ok) {
           throw new Error(`HTTP ${response.status} ${response.statusText}`);
         }
@@ -185,8 +206,20 @@ async function fetchTdxDataWithFailover<T>(
       }
     } catch (err: any) {
       lastError = err;
-      console.warn(`[TDX Sync] 金鑰 ${key.label} 請求失敗，自動輪替至下一組:`, err.message);
+      console.warn(`[TDX Sync] 金鑰 ${key.label} 請求失敗:`, err.message);
+      if (err.message?.includes("429") || err.message?.includes("Rate Limit")) {
+        // 429 限流直接中止輪轉，防雪崩
+        break;
+      }
     }
+  }
+
+  // 嘗試降級回傳安全空結構，避免整個同步任務中斷崩潰
+  if (url.includes("LiveEvent") || url.includes("Incident")) {
+    return { data: { UpdateTime: new Date().toISOString(), UpdateInterval: 300, LiveEvents: [] } as any, keyUsed: "Fallback" };
+  }
+  if (url.includes("RampMetering")) {
+    return { data: [] as any, keyUsed: "Fallback" };
   }
 
   throw lastError || new Error("所有 TDX 輪替金鑰皆無法成功獲取資料");
@@ -345,11 +378,11 @@ export default async function handler(req: any, res: any) {
 
     // 2. 抓取國道 5 號之 VD 車速、流量
     const vdUrl =
-      "https://tdx.transportdata.tw/api/basic/v2/Road/Traffic/Live/VD/Freeway?$filter=startswith(VDID,%20%27VD-N5%27)&$format=JSON";
+      "https://tdx.transportdata.tw/api/basic/v2/Road/Traffic/Live/VD/Freeway?$filter=startswith(VDID,%20'VD-N5')&$format=JSON";
     const liveEventsUrl =
-      "https://tdx.transportdata.tw/api/basic/v2/Road/Traffic/Live/LiveEvent/Freeway?$filter=contains(Location/FreeExpressHighway/Road,%20%27國道5號%27)&$format=JSON";
+      "https://tdx.transportdata.tw/api/basic/v2/Road/Traffic/Live/LiveEvent/Freeway?$filter=contains(Location/FreeExpressHighway/Road,%20'國道5號')&$format=JSON";
     const rampMeterUrl =
-      "https://tdx.transportdata.tw/api/basic/v2/Road/Traffic/Live/RampMetering/Freeway?$format=JSON&$filter=FreewayID%20eq%20%27國道5號%27";
+      "https://tdx.transportdata.tw/api/basic/v2/Road/Traffic/Live/RampMetering/Freeway?$format=JSON&$filter=FreewayID%20eq%20'國道5號'";
 
     const [vdRes, liveEventsRes, rampMeterRes] = await Promise.allSettled([
       fetchTdxDataWithFailover<any>(vdUrl, keyPool, redis, currentKeyIndex),

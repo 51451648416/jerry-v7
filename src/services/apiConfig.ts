@@ -27,8 +27,8 @@ const STORAGE_KEY = "N5_CUSTOM_API_CONFIG_V1";
 
 export const DEFAULT_API_CONFIG: ApiEndpointConfig = {
   baseUrl: "",
-  freewayVdPath: "https://tdx.transportdata.tw/api/basic/v2/Road/Traffic/Live/VD/Freeway?$filter=startswith(VDID,%20%27VD-N5%27)&$format=JSON",
-  freewayLiveEventsPath: "https://tdx.transportdata.tw/api/basic/v2/Road/Traffic/Live/LiveEvent/Freeway?$filter=contains(Location/FreeExpressHighway/Road,%20%27國道5號%27)&$format=JSON",
+  freewayVdPath: "https://tdx.transportdata.tw/api/basic/v2/Road/Traffic/Live/VD/Freeway?$filter=startswith(VDID,%20'VD-N5')&$format=JSON",
+  freewayLiveEventsPath: "https://tdx.transportdata.tw/api/basic/v2/Road/Traffic/Live/LiveEvent/Freeway?$filter=contains(Location/FreeExpressHighway/Road,%20'國道5號')&$format=JSON",
   tokenPath: "https://tdx.transportdata.tw/auth/realms/TDXConnect/protocol/openid-connect/token",
   healthPath: "/api/health",
   customAuthHeaderName: "Authorization",

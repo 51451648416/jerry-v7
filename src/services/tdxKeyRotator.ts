@@ -321,6 +321,12 @@ export class TdxKeyRotationSystem {
   private lastRotationTimestamp?: string;
   private lastRotationReason?: string;
 
+  // 429 限流保護、指數退避與短暫熔斷器 (Circuit Breaker)
+  private consecutive429Count: number = 0;
+  private rateLimitCooldownUntil: number = 0;
+  private currentBackoffMs: number = 10000; // 初始退避冷卻 10 秒
+  private circuitBreakerTrippedUntil: number = 0; // 連續 2 次 429 觸發 60 秒熔斷
+
   constructor() {
     this.initializeKeys();
   }
@@ -555,6 +561,20 @@ export class TdxKeyRotationSystem {
     const contentType = response.headers.get("content-type") || "";
     const isJson = contentType.toLowerCase().includes("json");
 
+    if (status === 429) {
+      this.consecutive429Count += 1;
+      const cooldown = Math.max(10000, this.currentBackoffMs);
+      this.rateLimitCooldownUntil = Date.now() + cooldown;
+      this.currentBackoffMs = Math.min(60000, this.currentBackoffMs * 2);
+      if (this.consecutive429Count >= 2) {
+        this.circuitBreakerTrippedUntil = Date.now() + 60000;
+        console.error(`[TDX 熔斷觸發] Token 認證連續 2 次遭遇 429 限流！已啟動 60 秒熔斷保護，停止對外請求。`);
+      }
+      const err = new Error(`TDX 認證伺服器限流 (HTTP 429: API rate limit exceeded)，冷卻等待 ${Math.round(cooldown / 1000)} 秒`);
+      (err as any).isRateLimit = true;
+      throw err;
+    }
+
     if (!response.ok) {
       let errText = "";
       if (isJson) {
@@ -573,7 +593,7 @@ export class TdxKeyRotationSystem {
         pair.failCount = 10;
       }
       const err = new Error(`TDX 認證伺服器回應失敗 (${status}): ${errText}`);
-      (err as any).isAuthError = status === 400 || status === 401 || status === 403 || status === 429;
+      (err as any).isAuthError = status === 400 || status === 401 || status === 403;
       (err as any).isServerError = status === 500 || status === 502 || status === 503 || status === 504;
       throw err;
     }
@@ -610,6 +630,17 @@ export class TdxKeyRotationSystem {
     if (totalKeys === 0) {
       this.initializeKeys();
     }
+
+    const now = Date.now();
+    if (now < this.circuitBreakerTrippedUntil) {
+      const waitSec = Math.ceil((this.circuitBreakerTrippedUntil - now) / 1000);
+      throw new Error(`[TDX 熔斷中] 連續遭遇 429 限流，熔斷保護中（尚餘 ${waitSec} 秒），暫停請求 Token`);
+    }
+    if (now < this.rateLimitCooldownUntil) {
+      const waitSec = Math.ceil((this.rateLimitCooldownUntil - now) / 1000);
+      throw new Error(`[TDX 退避冷卻中] 遭遇 429 限流，退避冷卻中（尚餘 ${waitSec} 秒），暫停請求 Token`);
+    }
+
     const maxAttempts = Math.max(1, this.keyPairs.length);
     let lastError: any = null;
 
@@ -622,6 +653,10 @@ export class TdxKeyRotationSystem {
         lastError = err;
         const msg = err.message || "";
         console.warn(`[TDX 金鑰輪流系統] 金鑰組「${currentPair.label}」獲取 Token 失敗：`, msg);
+        if (msg.includes("429") || msg.includes("限流") || msg.includes("rate limit") || (err as any).isRateLimit) {
+          // 429 限流時嚴禁毫秒級輪換其他金鑰重打，直接退出以保護其餘金鑰
+          break;
+        }
         // 標記失敗計數並切換至下一組金鑰繼續嘗試
         this.rotateToNextKey(`Token 請求異常 (${msg})`);
       }
@@ -647,6 +682,29 @@ export class TdxKeyRotationSystem {
     if (totalKeys === 0) {
       this.initializeKeys();
     }
+
+    const now = Date.now();
+    // 檢查短暫熔斷機制 (Circuit Breaker: 若連續 2 次遇到 429，60 秒內直接暫停對外發送 TDX 請求)
+    if (now < this.circuitBreakerTrippedUntil) {
+      const remainingSec = Math.ceil((this.circuitBreakerTrippedUntil - now) / 1000);
+      console.warn(
+        `[TDX 熔斷機制生效中] 連續觸發限流，已啟動熔斷保護！尚餘 ${remainingSec} 秒暫停對外發送 TDX 請求，改回傳本地快取或預設交通流速`
+      );
+      return this.resolveFallbackData<T>(endpointUrl, this.getActiveKeyPair(), 0);
+    }
+
+    // 檢查指數退避冷卻 (Exponential Backoff: 429 後強制冷卻至少 10 秒)
+    if (now < this.rateLimitCooldownUntil) {
+      const remainingSec = Math.ceil((this.rateLimitCooldownUntil - now) / 1000);
+      console.warn(
+        `[TDX 指數退避冷卻中] 遭遇 429 限流，尚需冷卻 ${remainingSec} 秒，暫停發送外部請求，改回傳本地快取`
+      );
+      return this.resolveFallbackData<T>(endpointUrl, this.getActiveKeyPair(), 0);
+    }
+
+    // 在發送請求前印出組裝後的完整 URL 以便驗證
+    console.log("[TDX KeyManager] 準備發送 TDX API 請求 URL:", endpointUrl);
+
     const maxAttempts = Math.max(1, this.keyPairs.length);
     let lastError: any = null;
 
@@ -678,29 +736,57 @@ export class TdxKeyRotationSystem {
         const contentType = response.headers.get("content-type") || "";
         const isJson = contentType.toLowerCase().includes("json");
 
-        // 步驟二：智能區分金鑰失效與伺服器延遲/端點錯誤
-        // 1. 收到 HTTP 401（認證錯誤）、403（金鑰無效）或 429（超過呼叫配額）時，切換至下一組備用金鑰
-        if (status === 401 || status === 403 || status === 429) {
+        // 一、修復 TDX API 404：若 TDX 回傳 404，優雅降級為空資料或快取資料，嚴禁直接中斷或引發重發迴圈
+        if (status === 404) {
+          console.warn(
+            `[TDX KeyManager] 端點回傳 404 (Resource Not Found)，優雅降級為空資料，不進行金鑰輪替: ${endpointUrl}`
+          );
+          return this.resolveFallbackData<T>(endpointUrl, keyPair, attempt + 1);
+        }
+
+        // 二、遏止 HTTP 429 Rate Limit 引發的「金鑰瘋狂輪轉」死循環
+        // 當收到 HTTP 429 時，代表所有請求頻率已達上限，嚴禁「立刻毫秒級切換下一組金鑰重打」
+        if (status === 429) {
+          const errText = await response.text().catch(() => "");
+          this.consecutive429Count += 1;
+          const backoffWait = Math.max(10000, this.currentBackoffMs);
+          this.rateLimitCooldownUntil = Date.now() + backoffWait;
+          this.currentBackoffMs = Math.min(60000, this.currentBackoffMs * 2);
+
+          console.warn(
+            `[TDX 限流保護] 遭遇 HTTP 429 (連續 ${this.consecutive429Count} 次): ${errText.slice(0, 100)}。嚴禁切換金鑰！啟動指數退避強制冷卻 ${Math.round(backoffWait / 1000)} 秒...`
+          );
+
+          // 連續 2 次遇到 429，在 60 秒內直接暫停對外發送 TDX 請求
+          if (this.consecutive429Count >= 2) {
+            this.circuitBreakerTrippedUntil = Date.now() + 60000;
+            console.error(
+              `[TDX 熔斷機制觸發] 連續 2 次遭遇 HTTP 429 限流！已開啟 60 秒熔斷保護，停止對外發送請求，改以本地快取或預設交通流速提供服務`
+            );
+          }
+
+          // 直接降級回傳快取或預設值，立即終止本次請求迴圈，嚴禁毫秒級切換下一組金鑰重打！
+          return this.resolveFallbackData<T>(endpointUrl, keyPair, attempt + 1);
+        }
+
+        // 收到 HTTP 401（認證錯誤）、403（金鑰無效）時，切換至下一組備用金鑰
+        if (status === 401 || status === 403) {
           const errText = await response.text().catch(() => "");
           const cleanErr = errText.length > 200 ? errText.substring(0, 200) + "..." : errText;
           console.warn(
-            `[TDX 金鑰輪流系統] 金鑰「${keyPair.label}」遭遇授權或限流 HTTP ${status}，自動切換至下一組金鑰...`
+            `[TDX 金鑰輪流系統] 金鑰「${keyPair.label}」遭遇授權錯誤 HTTP ${status}，切換至下一組備用金鑰...`
           );
           this.tokenCache.delete(keyPair.id);
           this.rotateToNextKey(`遭遇 HTTP ${status}: ${cleanErr}`);
           continue;
         }
 
-        // 2. 若遇 404 (Resource Not Found) 或 400 (Bad Request)，代表是 URL 路徑或過濾參數不存在
-        if (status === 404) {
-          throw new Error(`TDX 數據端點找不到資源 (HTTP 404)。請確認端點路徑。`);
-        }
         if (status === 400) {
-          const rawErr = await response.text().catch(() => "");
-          throw new Error(`TDX 數據端點參數請求錯誤 (HTTP 400): ${rawErr.slice(0, 120)}`);
+          console.warn(`[TDX KeyManager] 端點參數請求錯誤 (HTTP 400)，優雅降級不重試: ${endpointUrl}`);
+          return this.resolveFallbackData<T>(endpointUrl, keyPair, attempt + 1);
         }
 
-        // 3. 若遇到 500、502、503、504，伺服器不穩
+        // 若遇到 500、502、503、504，伺服器不穩
         if (status === 500 || status === 502 || status === 503 || status === 504) {
           throw new Error(`TDX 官方伺服器暫時不穩 (HTTP ${status})，伺服器回應過慢或維護中`);
         }
@@ -727,12 +813,14 @@ export class TdxKeyRotationSystem {
         if (!isJson) {
           const rawText = await response.text().catch(() => "");
           if (rawText.includes("<!DOCTYPE") || rawText.includes("<html")) {
-            throw new Error(`TDX 端點回傳 HTML 頁面而非 JSON 格式 (狀態碼: HTTP ${status})。請確認 API 網址。`);
+            console.warn(`[TDX KeyManager] 端點回傳 HTML 頁面而非 JSON 格式，優雅降級: ${endpointUrl}`);
+            return this.resolveFallbackData<T>(endpointUrl, keyPair, attempt + 1);
           }
           try {
             parsedData = JSON.parse(rawText) as T;
           } catch {
-            throw new Error(`TDX 回傳格式不符 (Content-Type: ${contentType})，無法解析 JSON。`);
+            console.warn(`[TDX KeyManager] 回傳非 JSON 格式，優雅降級: ${endpointUrl}`);
+            return this.resolveFallbackData<T>(endpointUrl, keyPair, attempt + 1);
           }
         } else {
           parsedData = (await response.json()) as T;
@@ -741,6 +829,10 @@ export class TdxKeyRotationSystem {
         keyPair.lastUsedTimestamp = Date.now();
         keyPair.isHealthy = true;
         keyPair.failCount = 0;
+
+        // 成功收到資料，重設連續 429 計數與退避時間
+        this.consecutive429Count = 0;
+        this.currentBackoffMs = 10000;
 
         // 寫入記憶體即時快取 (5 分鐘寬裕容錯備援)
         this.responseCache.set(endpointUrl, { data: parsedData, timestamp: Date.now() });
@@ -755,9 +847,17 @@ export class TdxKeyRotationSystem {
         const msg = err.message || "";
         const targetPair = activePair || this.getActiveKeyPair();
 
-        // 若是 404 或 400，直接拋出不需輪轉
-        if (msg.includes("404") || msg.includes("400") || msg.includes("HTML 頁面")) {
-          throw err;
+        // 若是 404、429、400、限流或熔斷，直接降級回傳，嚴禁輪轉金鑰
+        if (
+          msg.includes("404") ||
+          msg.includes("429") ||
+          msg.includes("400") ||
+          msg.includes("限流") ||
+          msg.includes("熔斷") ||
+          msg.includes("退避") ||
+          msg.includes("rate limit")
+        ) {
+          return this.resolveFallbackData<T>(endpointUrl, targetPair, attempt + 1);
         }
 
         console.warn(`[TDX 金鑰輪流系統] 透過「${targetPair.label}」請求數據失敗：`, msg);
@@ -765,21 +865,93 @@ export class TdxKeyRotationSystem {
       }
     }
 
-    // 若所有即時請求輪轉皆耗盡，嘗試讀取最近 10 分鐘內之記憶體成功快取進行無縫容錯
+    // 若所有即時請求輪轉皆耗盡，平滑輸出快取或安全降級結構，絕不中斷拋錯引發重發迴圈
+    console.warn(`[TDX 金鑰輪流系統] 啟動容錯保護，平滑輸出最近有效或預設遙測資料: ${endpointUrl}`);
+    return this.resolveFallbackData<T>(endpointUrl, this.getActiveKeyPair(), maxAttempts);
+  }
+
+  /**
+   * 優雅降級解析器：當遇到 404、429、熔斷或異常時，平滑輸出快取或預設安全資料結構，嚴禁引發重發迴圈
+   */
+  private resolveFallbackData<T>(
+    endpointUrl: string,
+    keyPair: TdxKeyPair,
+    attempts: number
+  ): { data: T; usedKeyPair: TdxKeyPair; attempts: number; isFromCache?: boolean } {
+    // 1. 記憶體即時快取
     const cachedEntry = this.responseCache.get(endpointUrl);
-    if (cachedEntry && Date.now() - cachedEntry.timestamp < 600000) {
-      console.warn("[TDX 金鑰輪流系統] 啟動記憶體快取容錯保護，平滑輸出最近有效遙測資料");
+    if (cachedEntry) {
       return {
         data: cachedEntry.data as T,
-        usedKeyPair: this.getActiveKeyPair(),
-        attempts: maxAttempts,
+        usedKeyPair: keyPair,
+        attempts,
         isFromCache: true,
       };
     }
 
-    throw new Error(
-      `所有 TDX 金鑰輪替嘗試皆失敗 (共測試 ${maxAttempts} 組金鑰)。最後異常：${lastError?.message || "連線逾時"}`
-    );
+    // 2. VD 流量資料：嘗試本機 LocalStorage 快取
+    if (endpointUrl.includes("VD") || endpointUrl.includes("freeway-vd")) {
+      if (typeof window !== "undefined" && window.localStorage) {
+        try {
+          const raw = localStorage.getItem("LAST_VALID_FREEWAY_VD_DATA");
+          if (raw) {
+            const parsed = JSON.parse(raw);
+            if (parsed && (Array.isArray(parsed) || parsed.VDLives || parsed.data)) {
+              return {
+                data: parsed as T,
+                usedKeyPair: keyPair,
+                attempts,
+                isFromCache: true,
+              };
+            }
+          }
+        } catch {}
+      }
+      return {
+        data: {
+          UpdateTime: new Date().toISOString(),
+          UpdateInterval: 60,
+          AuthorityCode: "NFB",
+          VDLives: [],
+        } as any,
+        usedKeyPair: keyPair,
+        attempts,
+        isFromCache: true,
+      };
+    }
+
+    // 3. 即時路況事件 (LiveEvent / Incident)
+    if (endpointUrl.includes("LiveEvent") || endpointUrl.includes("Incident")) {
+      return {
+        data: {
+          UpdateTime: new Date().toISOString(),
+          UpdateInterval: 300,
+          AuthorityCode: "NFB",
+          LiveEvents: [],
+        } as any,
+        usedKeyPair: keyPair,
+        attempts,
+        isFromCache: true,
+      };
+    }
+
+    // 4. 匝道儀控 (RampMetering)
+    if (endpointUrl.includes("RampMetering")) {
+      return {
+        data: [] as any,
+        usedKeyPair: keyPair,
+        attempts,
+        isFromCache: true,
+      };
+    }
+
+    // 5. 通用預設降級
+    return {
+      data: {} as any,
+      usedKeyPair: keyPair,
+      attempts,
+      isFromCache: true,
+    };
   }
 
   /**

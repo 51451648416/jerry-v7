@@ -14,13 +14,13 @@ export const TDX_OFFICIAL_AUTH_URL =
   "https://tdx.transportdata.tw/auth/realms/TDXConnect/protocol/openid-connect/token";
 
 export const TDX_OFFICIAL_FREEWAY_VD_URL =
-  "https://tdx.transportdata.tw/api/basic/v2/Road/Traffic/Live/VD/Freeway?$filter=startswith(VDID,%20%27VD-N5%27)&$format=JSON";
+  "https://tdx.transportdata.tw/api/basic/v2/Road/Traffic/Live/VD/Freeway?$filter=startswith(VDID,%20'VD-N5')&$format=JSON";
 
 export const TDX_OFFICIAL_FREEWAY_LIVE_EVENTS_URL =
-  "https://tdx.transportdata.tw/api/basic/v2/Road/Traffic/Live/LiveEvent/Freeway?$filter=contains(Location/FreeExpressHighway/Road,%20%27國道5號%27)&$format=JSON";
+  "https://tdx.transportdata.tw/api/basic/v2/Road/Traffic/Live/LiveEvent/Freeway?$filter=contains(Location/FreeExpressHighway/Road,%20'國道5號')&$format=JSON";
 
 export const TDX_OFFICIAL_FREEWAY_INCIDENT_URL =
-  "https://tdx.transportdata.tw/api/basic/v2/Road/Traffic/Live/LiveEvent/Freeway?$filter=contains(Location/FreeExpressHighway/Road,%20%27國道5號%27)&$format=JSON";
+  "https://tdx.transportdata.tw/api/basic/v2/Road/Traffic/Live/LiveEvent/Freeway?$filter=contains(Location/FreeExpressHighway/Road,%20'國道5號')&$format=JSON";
 
 // 快取全域最新抓取到的 Overview 數據，避免同一個 render cycle 重複請求
 let cachedOverviewData: any = null;
@@ -273,6 +273,7 @@ export async function fetchDirectFreewayVd(customUrl?: string): Promise<any> {
 
   // 3. 備援直連機制：透過金鑰輪轉系統向 TDX 官方端點請求
   const targetUrl = customUrl && customUrl.trim() ? customUrl.trim() : TDX_OFFICIAL_FREEWAY_VD_URL;
+  console.log("[TDX Client] 準備向 TDX 發送雪隧 VD 車流 URL:", targetUrl);
   try {
     const result = await globalTdxKeyManager.executeWithFailover<any>(targetUrl, {
       method: "GET",
@@ -306,10 +307,20 @@ export async function fetchDirectFreewayVd(customUrl?: string): Promise<any> {
       } catch {}
     }
 
-    throw directErr;
+    return { UpdateTime: new Date().toISOString(), UpdateInterval: 60, VDLives: [] };
   }
 
-  throw new Error("官方 TDX 伺服器目前未回傳雪山隧道車輛偵測器數據");
+  // 若無回傳資料，嘗試讀取本機快取或安全降級結構
+  if (typeof window !== "undefined" && window.localStorage) {
+    try {
+      const cachedRaw = localStorage.getItem(STORAGE_KEY_LAST_VALID_VD);
+      if (cachedRaw) {
+        const cachedData = JSON.parse(cachedRaw);
+        if (cachedData) return cachedData;
+      }
+    } catch {}
+  }
+  return { UpdateTime: new Date().toISOString(), UpdateInterval: 60, VDLives: [] };
 }
 
 /**
@@ -345,6 +356,7 @@ export async function fetchDirectFreewayLiveEvents(customUrl?: string): Promise<
 
   // 3. 備援直連機制
   const targetUrl = customUrl && customUrl.trim() ? customUrl.trim() : TDX_OFFICIAL_FREEWAY_LIVE_EVENTS_URL;
+  console.log("[TDX Client] 準備向 TDX 發送即時路況事件 URL:", targetUrl);
   try {
     const result = await globalTdxKeyManager.executeWithFailover<TdxLiveEventsRootPayload>(targetUrl, {
       method: "GET",
@@ -368,6 +380,7 @@ export async function fetchDirectFreewayLiveEvents(customUrl?: string): Promise<
   */
 export async function fetchFreewayIncidents(customUrl?: string): Promise<any[]> {
   const targetUrl = customUrl && customUrl.trim() ? customUrl.trim() : TDX_OFFICIAL_FREEWAY_INCIDENT_URL;
+  console.log("[TDX Client] 準備向 TDX 發送交通事故通報 URL:", targetUrl);
   try {
     const result = await globalTdxKeyManager.executeWithFailover<any>(targetUrl, {
       method: "GET",
@@ -378,13 +391,14 @@ export async function fetchFreewayIncidents(customUrl?: string): Promise<any[]> 
 
     if (result.data) {
       if (Array.isArray(result.data)) return result.data;
-      if (Array.isArray(result.data.Incidents)) return result.data.Incidents;
-      if (Array.isArray(result.data.LiveEvents)) return result.data.LiveEvents;
+      if (result.data.LiveEvents && Array.isArray(result.data.LiveEvents)) return result.data.LiveEvents;
+      if (result.data.Incidents && Array.isArray(result.data.Incidents)) return result.data.Incidents;
     }
+    return [];
   } catch (err: any) {
-    // 安全返回空陣列，不中斷主流程
+    console.warn("TDX Incidents 抓取異常，優雅降級回傳空陣列：", err.message);
+    return [];
   }
-  return [];
 }
 
 export async function fetchEtcTravelTimeData(): Promise<any> {
@@ -491,12 +505,13 @@ export async function fetchRampMeteringData(): Promise<any> {
   } catch {}
 
   const url = "https://tdx.transportdata.tw/api/basic/v2/Road/Traffic/Live/RampMetering/Freeway?$format=JSON&$filter=FreewayID eq '國道5號'";
+  console.log("[TDX Client] 準備向 TDX 發送匝道儀控 URL:", url);
   try {
     const result = await globalTdxKeyManager.executeWithFailover(url, { method: "GET", headers: { Accept: "application/json" } });
-    return result.data;
-  } catch (err) {
-    console.warn("Ramp Metering Fetch Error:", err);
-    return null;
+    return result.data || [];
+  } catch (err: any) {
+    console.warn("Ramp Metering Fetch Error，優雅降級回傳空陣列:", err.message);
+    return [];
   }
 }
 
