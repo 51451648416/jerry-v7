@@ -1,15 +1,5 @@
 {
   "rewrites": [
     { "source": "/((?!api/.*).*)", "destination": "/index.html" }
-  ],
-  "crons": [
-    {
-      "path": "/api/tdx/sync",
-      "schedule": "* * * * *"
-    },
-    {
-      "path": "/api/cctv/cross-validation/step",
-      "schedule": "* * * * *"
-    }
   ]
 }
