@@ -1,7 +1,12 @@
 {
-  "buildCommand": "vite build",
+  "framework": "vite",
   "outputDirectory": "dist",
+  "functions": {
+    "api/**": {
+      "excludeFiles": "{cctv/**,config/**,model/**,shared/**,tdx/**,traffic/**,*.ts}"
+    }
+  },
   "rewrites": [
-    { "source": "/(.*)", "destination": "/index.html" }
+    { "source": "/((?!api/.*).*)", "destination": "/index.html" }
   ]
 }
