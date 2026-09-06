@@ -1,12 +1,5 @@
 {
-  "framework": "vite",
-  "outputDirectory": "dist",
-  "functions": {
-    "api/**/*.ts": {
-      "runtime": "nodejs18.x",
-      "maxDuration": 10
-    }
-  },
+  "cleanUrls": true,
   "rewrites": [
     { "source": "/((?!api/.*).*)", "destination": "/index.html" }
   ]
