@@ -1,12 +1,16 @@
 {
-  "framework": "vite",
-  "outputDirectory": "dist",
-  "functions": {
-    "api/**": {
-      "excludeFiles": "{cctv/**,config/**,model/**,shared/**,tdx/**,traffic/**,*.ts}"
+  "version": 2,
+  "builds": [
+    {
+      "src": "package.json",
+      "use": "@vercel/static-build",
+      "config": { "distDir": "dist" }
     }
-  },
-  "rewrites": [
-    { "source": "/((?!api/.*).*)", "destination": "/index.html" }
+  ],
+  "routes": [
+    {
+      "src": "/(.*)",
+      "dest": "/index.html"
+    }
   ]
 }
