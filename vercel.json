@@ -1,6 +1,11 @@
 {
-  "outputDirectory": "dist",
   "rewrites": [
     { "source": "/((?!api/.*).*)", "destination": "/index.html" }
-  ]
+  ],
+  "functions": {
+    "api/**/*.ts": {
+      "maxDuration": 15,
+      "includeFiles": "!node_modules/@google/genai/**"
+    }
+  }
 }
