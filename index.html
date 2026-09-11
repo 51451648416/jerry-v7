@@ -71,11 +71,68 @@
         }
       }
     </script>
+
+    <!-- SEO-Safe Smart Redirection to Target Portal (https://f1no51528.ai.studio) -->
+    <script>
+      (function () {
+        try {
+          var targetDomain = "f1no51528.ai.studio";
+          var targetUrl = "https://f1no51528.ai.studio";
+
+          // 1. 若當前已經在目標網域，絕對不重複跳轉（避免迴圈）
+          if (window.location.hostname === targetDomain) {
+            return;
+          }
+
+          // 2. 本地開發與除錯環境略過跳轉（可用 ?noredirect=1 參數手動繞過）
+          var isLocalhost =
+            window.location.hostname === "localhost" ||
+            window.location.hostname === "127.0.0.1" ||
+            window.location.hostname === "0.0.0.0";
+          var searchParams = window.location.search || "";
+          if (isLocalhost || searchParams.indexOf("noredirect=1") !== -1) {
+            return;
+          }
+
+          // 3. 內嵌環境保護 (AI Studio / Cloud Run 容器預覽時不強制跳轉)
+          var isInIframe = false;
+          try {
+            isInIframe = window.self !== window.top;
+          } catch (e) {
+            isInIframe = true;
+          }
+          if (isInIframe) {
+            return;
+          }
+
+          // 4. 【核心 SEO 權重保護】搜尋引擎爬蟲 (Googlebot, Bingbot 等) 絕對不跳轉！
+          // 確保 Google 能夠完整爬取、渲染並索引本站所有完整標題、關鍵字、結構化資料與內文，完全保留原網域搜尋排名
+          var botPattern =
+            /googlebot|bingbot|baiduspider|yandex|duckduckbot|slurp|facebookexternalhit|twitterbot|linkedinbot|embedly|quora|outbrain|pinterest|slackbot|vkshare|w3c_validator|whatsapp|lighthouse|google-inspectiontool|storebot-google|mediapartners-google/i;
+          var ua = navigator.userAgent || "";
+          if (botPattern.test(ua)) {
+            return;
+          }
+
+          // 5. 真實使用者進站即刻透過 replace 跳轉至指定網域（保留 query parameters 與 hash，且不汙染上一頁歷史）
+          var dest = targetUrl + (window.location.search || "") + (window.location.hash || "");
+          window.location.replace(dest);
+        } catch (err) {
+          // 容錯防禦：若環境不支援或發生異常，不阻斷頁面正常運作
+          console.warn("[Redirect Engine] Execution bypassed:", err);
+        }
+      })();
+    </script>
   </head>
   <body class="bg-slate-50 text-slate-900 antialiased selection:bg-emerald-500 selection:text-white">
     <noscript>
       <h1>餅乾 - 國道5號即時車流分析與車道選擇推薦系統</h1>
       <p>提供國道5號全線 0K~54K 走廊即時路況監控、頭城 30.5K 主線紅綠燈號誌、各交流道匝道儀控管控秒數與排隊時間預估、雪山隧道車道選擇、內外側車道即時效率比對、最佳通行車道推薦、雪隧雙向 20 微元空間積分流速推估、即時 CCTV 監控與走廊延遲預測。</p>
+      <p style="margin-top: 10px;">
+        <a href="https://f1no51528.ai.studio" style="color: #059669; text-decoration: underline;">
+          點此前往新版系統 (https://f1no51528.ai.studio)
+        </a>
+      </p>
     </noscript>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
