@@ -46,6 +46,7 @@ import TrafficRefreshControl, {
   BASE_COOLDOWN_SEC,
 } from "./components/TrafficRefreshControl";
 import DomainMigrationBanner from "./components/DomainMigrationBanner";
+import DomainMigrationPortal from "./components/DomainMigrationPortal";
 import { Direction, FinalEstimatorOutput, VehicleTransitMode } from "./types";
 import { runVdTrafficEstimator } from "./estimator/trafficEngine";
 import { isAdminAuthenticated, subscribeAdminAuth } from "./services/adminAuth";
@@ -77,6 +78,16 @@ const computeElapsedSeconds = (): number => {
 };
 
 export default function App() {
+  // 網域檢測：若不在目標網域 (f1no51528.ai.studio)，且未帶有 ?full=1 參數，則專注顯示大按鈕跳轉入口頁面（無其他干擾選項）
+  const isTargetSite =
+    typeof window !== "undefined" &&
+    (window.location.hostname === "f1no51528.ai.studio" ||
+      new URLSearchParams(window.location.search).has("full"));
+
+  if (!isTargetSite) {
+    return <DomainMigrationPortal targetUrl="https://f1no51528.ai.studio" />;
+  }
+
   // Top 5 Tabs: 'lane' | 'corridor' | 'departure' | 'theory' | 'cctv'
   const [activeTab, setActiveTab] = useState<ActiveTabType>("lane");
 
