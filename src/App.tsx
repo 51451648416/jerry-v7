@@ -45,6 +45,7 @@ import TrafficRefreshControl, {
   STORAGE_KEY_TIMESTAMPS,
   BASE_COOLDOWN_SEC,
 } from "./components/TrafficRefreshControl";
+import DomainMigrationBanner from "./components/DomainMigrationBanner";
 import { Direction, FinalEstimatorOutput, VehicleTransitMode } from "./types";
 import { runVdTrafficEstimator } from "./estimator/trafficEngine";
 import { isAdminAuthenticated, subscribeAdminAuth } from "./services/adminAuth";
@@ -547,6 +548,9 @@ export default function App() {
           </motion.div>
         )}
       </AnimatePresence>
+
+      {/* Domain Migration Notification & Jump Button (SEO-Friendly) */}
+      <DomainMigrationBanner targetUrl="https://f1no51528.ai.studio" />
 
       {/* Top Header & Mobile Nav */}
       <Header

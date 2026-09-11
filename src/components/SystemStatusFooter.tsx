@@ -12,6 +12,7 @@ import {
   RefreshCw,
   Database,
   Key,
+  ExternalLink,
 } from "lucide-react";
 import { useCloudSyncStatus } from "../services/cloudSyncService";
 
@@ -141,6 +142,15 @@ export default function SystemStatusFooter() {
               <Activity className="h-3.5 w-3.5 text-emerald-600" />
               即時服務：
             </span>
+
+            <a
+              id="footer-btn-goto-new-domain"
+              href="https://f1no51528.ai.studio"
+              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-emerald-50 text-emerald-700 hover:bg-emerald-100 border border-emerald-300 font-sans font-bold text-[11px] transition shadow-2xs"
+            >
+              <span>新版服務站</span>
+              <ExternalLink className="h-2.5 w-2.5" />
+            </a>
 
             <span className="inline-flex items-center gap-1.5 text-emerald-700">
               <CheckCircle2 className="h-3 w-3 text-emerald-600" />

@@ -72,57 +72,6 @@
       }
     </script>
 
-    <!-- SEO-Safe Smart Redirection to Target Portal (https://f1no51528.ai.studio) -->
-    <script>
-      (function () {
-        try {
-          var targetDomain = "f1no51528.ai.studio";
-          var targetUrl = "https://f1no51528.ai.studio";
-
-          // 1. 若當前已經在目標網域，絕對不重複跳轉（避免迴圈）
-          if (window.location.hostname === targetDomain) {
-            return;
-          }
-
-          // 2. 本地開發與除錯環境略過跳轉（可用 ?noredirect=1 參數手動繞過）
-          var isLocalhost =
-            window.location.hostname === "localhost" ||
-            window.location.hostname === "127.0.0.1" ||
-            window.location.hostname === "0.0.0.0";
-          var searchParams = window.location.search || "";
-          if (isLocalhost || searchParams.indexOf("noredirect=1") !== -1) {
-            return;
-          }
-
-          // 3. 內嵌環境保護 (AI Studio / Cloud Run 容器預覽時不強制跳轉)
-          var isInIframe = false;
-          try {
-            isInIframe = window.self !== window.top;
-          } catch (e) {
-            isInIframe = true;
-          }
-          if (isInIframe) {
-            return;
-          }
-
-          // 4. 【核心 SEO 權重保護】搜尋引擎爬蟲 (Googlebot, Bingbot 等) 絕對不跳轉！
-          // 確保 Google 能夠完整爬取、渲染並索引本站所有完整標題、關鍵字、結構化資料與內文，完全保留原網域搜尋排名
-          var botPattern =
-            /googlebot|bingbot|baiduspider|yandex|duckduckbot|slurp|facebookexternalhit|twitterbot|linkedinbot|embedly|quora|outbrain|pinterest|slackbot|vkshare|w3c_validator|whatsapp|lighthouse|google-inspectiontool|storebot-google|mediapartners-google/i;
-          var ua = navigator.userAgent || "";
-          if (botPattern.test(ua)) {
-            return;
-          }
-
-          // 5. 真實使用者進站即刻透過 replace 跳轉至指定網域（保留 query parameters 與 hash，且不汙染上一頁歷史）
-          var dest = targetUrl + (window.location.search || "") + (window.location.hash || "");
-          window.location.replace(dest);
-        } catch (err) {
-          // 容錯防禦：若環境不支援或發生異常，不阻斷頁面正常運作
-          console.warn("[Redirect Engine] Execution bypassed:", err);
-        }
-      })();
-    </script>
   </head>
   <body class="bg-slate-50 text-slate-900 antialiased selection:bg-emerald-500 selection:text-white">
     <noscript>
