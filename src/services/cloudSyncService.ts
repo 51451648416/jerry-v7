@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { syncApiConfigFromServer } from "./apiConfig";
-import { syncTdxKeysFromServer, getStoredTdxKeyPairs } from "./tdxKeyRotator";
+import { syncTdxKeysFromServer, getStoredTdxKeyPairs, globalTdxKeyManager } from "./tdxKeyRotator";
 import { syncLearnedParametersFromServer, getLearnedParameters } from "../estimator/modelTrainingEngine";
 import { syncDatasetFromServer, getStoredDataset } from "./datasetRepository";
 
@@ -109,16 +109,33 @@ export async function performBidirectionalCloudSync(): Promise<CloudSyncState> {
       : "offline";
 
     // 2. 並行拉取金鑰、模型權重、資料集與 API 配置
-    const [keysResult, modelResult, datasetResult] = await Promise.allSettled([
+    const [keysResult, modelResult, datasetResult, configResult] = await Promise.allSettled([
       syncTdxKeysFromServer(),
       syncLearnedParametersFromServer(),
       syncDatasetFromServer(),
       syncApiConfigFromServer(),
     ]);
 
-    // 3. 取得本地最新數值
-    const localKeys = getStoredTdxKeyPairs();
-    const validKeyCount = localKeys.filter((k) => k.isEnabled && k.clientId && k.clientSecret).length;
+    // 3. 取得本地最新數值與輪轉系統狀態
+    let localKeys = getStoredTdxKeyPairs();
+    let validKeyCount = localKeys.filter((k) => k.isEnabled && k.clientId && k.clientSecret).length;
+    if (validKeyCount === 0) {
+      const activeKeys = globalTdxKeyManager.getAllKeyPairs();
+      validKeyCount = activeKeys.filter((k) => k.clientId && k.clientSecret).length;
+      if (validKeyCount > 0 && typeof localStorage !== "undefined") {
+        // 自動初始化持久化，讓使用者進入介面即可檢視
+        const initialCustomKeys = activeKeys.map((k, idx) => ({
+          id: k.id || `key-init-${idx + 1}`,
+          clientId: k.clientId,
+          clientSecret: k.clientSecret,
+          label: k.label || `金鑰組 #${idx + 1}`,
+          isEnabled: true,
+        }));
+        try {
+          localStorage.setItem("TDX_API_KEYS", JSON.stringify(initialCustomKeys));
+        } catch {}
+      }
+    }
     const currentModel = getLearnedParameters();
     const currentDataset = getStoredDataset();
 
@@ -126,11 +143,11 @@ export async function performBidirectionalCloudSync(): Promise<CloudSyncState> {
 
     let statusText = "";
     if (isCloudConnected) {
-      statusText = `雲端同步中 (已載入 ${validKeyCount} 組全域金鑰 / 全域模型 v${currentModel.version || 2})`;
+      statusText = `雲端同步正常 (已載入 ${validKeyCount} 組全域金鑰 / 全域模型 v${currentModel.version || 2})`;
     } else if (isServerOnline) {
-      statusText = `單機快取模式 (${validKeyCount} 組金鑰 / 模型 v${currentModel.version || 2})`;
+      statusText = `後端連線正常 (已載入 ${validKeyCount} 組有效金鑰 / 模型 v${currentModel.version || 2})`;
     } else {
-      statusText = `使用單機快取 (未同步)`;
+      statusText = `單機離線快取 (${validKeyCount} 組備用金鑰)`;
     }
 
     globalSyncState = {

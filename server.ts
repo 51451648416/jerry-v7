@@ -929,6 +929,25 @@ async function startServer() {
       if (redis) {
         data = (await redis.get("tdx_keys")) || (await redis.get("hsuehshan:config:keys")) || data;
       }
+      if (!data || (Array.isArray(data) && data.length === 0)) {
+        const fallbackKeys = globalTdxKeyManager.getAllKeyPairs().map((k, i) => ({
+          id: k.id || `key-server-${i + 1}`,
+          clientId: k.clientId,
+          clientSecret: k.clientSecret,
+          label: k.label,
+          isEnabled: true,
+        }));
+        if (fallbackKeys.length > 0) {
+          data = fallbackKeys;
+          globalSavedTdxKeys = fallbackKeys;
+          if (redis) {
+            try {
+              await redis.set("tdx_keys", fallbackKeys);
+              await redis.set("hsuehshan:config:keys", fallbackKeys);
+            } catch {}
+          }
+        }
+      }
       return res.json({ success: true, data });
     } catch (e: any) {
       return res.json({ success: false, error: e.message });
@@ -1210,8 +1229,8 @@ async function startServer() {
     try {
       const redis = getRedis();
       if (redis) {
-        const cached = await redis.get("hsuehshan:config:keys");
-        if (cached) {
+        const cached = (await redis.get("hsuehshan:config:keys")) || (await redis.get("tdx_keys"));
+        if (cached && (Array.isArray(cached) ? cached.length > 0 : true)) {
           globalSavedTdxKeys = cached;
           return res.json(cached);
         }
@@ -1219,8 +1238,19 @@ async function startServer() {
     } catch (err) {
       console.warn("讀取 Redis 金鑰失敗，切換至本機快取:", err);
     }
-    if (!globalSavedTdxKeys) return res.json([]);
-    return res.json(globalSavedTdxKeys);
+    if (!globalSavedTdxKeys || (Array.isArray(globalSavedTdxKeys) && globalSavedTdxKeys.length === 0)) {
+      const fallbackKeys = globalTdxKeyManager.getAllKeyPairs().map((k, i) => ({
+        id: k.id || `key-server-${i + 1}`,
+        clientId: k.clientId,
+        clientSecret: k.clientSecret,
+        label: k.label,
+        isEnabled: true,
+      }));
+      if (fallbackKeys.length > 0) {
+        globalSavedTdxKeys = fallbackKeys;
+      }
+    }
+    return res.json(globalSavedTdxKeys || []);
   });
 
   app.post("/api/config/keys", async (req, res) => {
@@ -1233,6 +1263,7 @@ async function startServer() {
       const redis = getRedis();
       if (redis) {
         await redis.set("hsuehshan:config:keys", req.body);
+        await redis.set("tdx_keys", req.body);
       }
       return res.json({ success: true });
     } catch (err: any) {

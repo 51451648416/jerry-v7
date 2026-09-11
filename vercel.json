@@ -1,20 +1,18 @@
 {
-  "version": 2,
-  "builds": [
+  "rewrites": [
     {
-      "src": "package.json",
-      "use": "@vercel/static-build",
-      "config": { "distDir": "dist" }
+      "source": "/((?!api/.*).*)",
+      "destination": "/index.html"
     }
   ],
-  "routes": [
+  "crons": [
     {
-      "src": "/assets/(.*)",
-      "dest": "/assets/$1"
+      "path": "/api/tdx/sync",
+      "schedule": "* * * * *"
     },
     {
-      "src": "/(.*)",
-      "dest": "/index.html"
+      "path": "/api/cctv/cross-validation/step",
+      "schedule": "* * * * *"
     }
   ]
 }

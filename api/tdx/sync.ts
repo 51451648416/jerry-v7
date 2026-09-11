@@ -14,38 +14,82 @@ interface TdxKeyConfig {
 // 記憶體 Token 快取 (當 Redis 不可用時備援)
 const memoryTokenCache = new Map<string, { token: string; expiresAt: number }>();
 
-// 取得環境變數中的 3 組金鑰輪替池與備援金鑰
-function getTdxKeyPool(): TdxKeyConfig[] {
+// 取得環境變數與 Redis 中的多組金鑰輪替池與備援金鑰
+async function getTdxKeyPool(redis: Redis | null): Promise<TdxKeyConfig[]> {
   const pool: TdxKeyConfig[] = [];
 
-  // Set 1
-  const id1 = process.env.TDX_CLIENT_ID || process.env.TDX_CLIENT_ID_1 || "";
-  const sec1 = process.env.TDX_CLIENT_SECRET || process.env.TDX_CLIENT_SECRET_1 || "";
-  if (id1 && sec1) {
-    pool.push({ id: "set-1", clientId: id1.trim(), clientSecret: sec1.trim(), label: "金鑰組 #1 (主要)" });
+  // 1. 優先自 Redis 讀取全域金鑰 (tdx_keys 或 hsuehshan:config:keys)
+  if (redis) {
+    try {
+      const customData: any = (await redis.get("tdx_keys")) || (await redis.get("hsuehshan:config:keys"));
+      const keysArray = Array.isArray(customData) ? customData : customData?.keys;
+      if (Array.isArray(keysArray)) {
+        keysArray.forEach((k: any, idx: number) => {
+          if (k.isEnabled !== false && k.clientId && k.clientSecret) {
+            pool.push({
+              id: k.id || `custom-${idx + 1}`,
+              clientId: String(k.clientId).trim(),
+              clientSecret: String(k.clientSecret).trim(),
+              label: k.label || `自訂金鑰組 #${idx + 1}`,
+            });
+          }
+        });
+      }
+    } catch {}
   }
 
-  // Set 2
-  const id2 = process.env.TDX_CLIENT_ID_2 || "";
-  const sec2 = process.env.TDX_CLIENT_SECRET_2 || "";
-  if (id2 && sec2) {
-    pool.push({ id: "set-2", clientId: id2.trim(), clientSecret: sec2.trim(), label: "金鑰組 #2 (輪替)" });
+  // 2. 讀取環境變數中的多組金鑰
+  if (process.env.TDX_API_KEYS) {
+    try {
+      const parsed = JSON.parse(process.env.TDX_API_KEYS);
+      if (Array.isArray(parsed)) {
+        parsed.forEach((k: any, idx: number) => {
+          if (k && k.clientId && k.clientSecret && !pool.some((p) => p.clientId === k.clientId)) {
+            pool.push({
+              id: k.id || `env-json-${idx + 1}`,
+              clientId: String(k.clientId).trim(),
+              clientSecret: String(k.clientSecret).trim(),
+              label: k.label || `環境變數金鑰 #${idx + 1}`,
+            });
+          }
+        });
+      }
+    } catch {}
   }
 
-  // Set 3
-  const id3 = process.env.TDX_CLIENT_ID_3 || "";
-  const sec3 = process.env.TDX_CLIENT_SECRET_3 || "";
-  if (id3 && sec3) {
-    pool.push({ id: "set-3", clientId: id3.trim(), clientSecret: sec3.trim(), label: "金鑰組 #3 (輪替)" });
+  for (let i = 1; i <= 5; i++) {
+    const suffix = i === 1 ? "" : `_${i}`;
+    const cid = (process.env[`TDX_CLIENT_ID${suffix}`] || "").trim();
+    const csec = (process.env[`TDX_CLIENT_SECRET${suffix}`] || "").trim();
+    if (cid && csec && !pool.some((p) => p.clientId === cid)) {
+      pool.push({
+        id: `set-${i}`,
+        clientId: cid,
+        clientSecret: csec,
+        label: i === 1 ? "金鑰組 #1 (主要)" : `金鑰組 #${i} (輪替)`,
+      });
+    }
   }
 
-  // 備援預設金鑰池 (若環境變數未填滿)
+  // 3. 備援預設有效金鑰池 (已驗證之官方認證金鑰組)
   const builtInBackup: TdxKeyConfig[] = [
     {
       id: "builtin-1",
-      clientId: "lovefiy0903-f8d75808-3306-4327",
-      clientSecret: "3b2a8558-8fb3-43ec-ada7-14f59e3476b4",
-      label: "系統主要金鑰",
+      clientId: "jerry0903-d82c8d89-56b2-4628",
+      clientSecret: "5fdae95b-b2d6-4b80-a153-2238d6e74db5",
+      label: "系統主要金鑰 #1",
+    },
+    {
+      id: "builtin-2",
+      clientId: "jerry0903-04044e4d-e59f-4e8d",
+      clientSecret: "d14df9b8-d005-4ce7-b7f5-5ac5fbb6d531",
+      label: "系統備援金鑰 #2",
+    },
+    {
+      id: "builtin-3",
+      clientId: "jerry09032-2cdccf91-accf-4ea4",
+      clientSecret: "be155ae3-84ba-4e41-92c4-7037799d0e6a",
+      label: "系統備援金鑰 #3",
     },
   ];
 
@@ -329,7 +373,7 @@ export default async function handler(req: any, res: any) {
 
   const startTime = Date.now();
   const redis = getRedis();
-  const keyPool = getTdxKeyPool();
+  const keyPool = await getTdxKeyPool(redis);
 
   try {
     // 1. 取得當前 Round-Robin 輪替指標

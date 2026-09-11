@@ -1,4 +1,5 @@
 import { Redis } from "@upstash/redis";
+import handleTdxSync from "../tdx/sync";
 
 export const maxDuration = 10;
 export const dynamic = "force-dynamic";
@@ -68,6 +69,31 @@ export default async function handler(req: any, res: any) {
     let parsedTraffic: any = null;
     if (trafficRaw) {
       parsedTraffic = typeof trafficRaw === "string" ? JSON.parse(trafficRaw) : trafficRaw;
+    } else {
+      // 若快取暫時未有車流資料，主動觸發即時同步填補快取
+      try {
+        const mockReq: any = { method: "GET" };
+        let syncJson: any = null;
+        const mockRes: any = {
+          setHeader: () => {},
+          status: () => ({
+            json: (data: any) => {
+              syncJson = data;
+              return data;
+            },
+            end: () => {},
+          }),
+        };
+        await handleTdxSync(mockReq, mockRes);
+        if (syncJson && syncJson.success) {
+          const freshTraffic = await redis.get("hsuehshan:tdx:traffic_realtime");
+          if (freshTraffic) {
+            parsedTraffic = typeof freshTraffic === "string" ? JSON.parse(freshTraffic) : freshTraffic;
+          }
+        }
+      } catch (syncErr) {
+        console.warn("[Traffic Overview] 即時觸發 TDX 同步異常:", syncErr);
+      }
     }
 
     const elapsed = Date.now() - startTime;

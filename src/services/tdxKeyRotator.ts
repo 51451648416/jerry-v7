@@ -148,25 +148,54 @@ export function saveStoredTdxKeyPairs(pairs: CustomTdxKeyInput[]): void {
 }
 
 /**
- * 從後端伺服器同步全域 TDX 金鑰 (跨後端/跨裝置同步，對應 Vercel /api/keys)
+ * 從後端伺服器同步全域 TDX 金鑰 (跨後端/跨裝置同步，對應 Vercel /api/keys 與 /api/config/keys)
  */
 export async function syncTdxKeysFromServer(): Promise<CustomTdxKeyInput[] | null> {
   if (typeof fetch === "undefined") return null;
   try {
-    const res = await fetch("/api/keys");
-    if (res.ok) {
-      const result = await res.json();
-      const rawData = result && typeof result === "object" && "data" in result ? result.data : result;
-      const keysArray = Array.isArray(rawData) ? rawData : rawData?.keys;
-      if (Array.isArray(keysArray) && keysArray.length > 0) {
-        localStorage.setItem(STORAGE_KEY_TDX_API_KEYS, JSON.stringify(keysArray));
-        const firstEnabled = keysArray.find((p: any) => p.isEnabled && p.clientId && p.clientSecret);
+    let result: any = null;
+    try {
+      const res = await fetch("/api/keys");
+      if (res.ok) {
+        result = await res.json();
+      }
+    } catch {}
+
+    // 若 /api/keys 無資料或異常，嘗試備用端點 /api/config/keys
+    if (!result || !result.data || (Array.isArray(result.data) && result.data.length === 0)) {
+      try {
+        const altRes = await fetch("/api/config/keys");
+        if (altRes.ok) {
+          const altJson = await altRes.json();
+          if (Array.isArray(altJson) && altJson.length > 0) {
+            result = { success: true, data: altJson };
+          }
+        }
+      } catch {}
+    }
+
+    const rawData = result && typeof result === "object" && "data" in result ? result.data : result;
+    const keysArray = Array.isArray(rawData) ? rawData : rawData?.keys;
+    if (Array.isArray(keysArray) && keysArray.length > 0) {
+      const validItems: CustomTdxKeyInput[] = keysArray
+        .filter((p: any) => p && (p.clientId || p.client_id) && (p.clientSecret || p.client_secret))
+        .map((p: any, idx: number) => ({
+          id: p.id || `key-synced-${idx + 1}-${Date.now()}`,
+          clientId: String(p.clientId || p.client_id).trim(),
+          clientSecret: String(p.clientSecret || p.client_secret).trim(),
+          label: p.label || `金鑰組 #${idx + 1}`,
+          isEnabled: p.isEnabled !== false,
+        }));
+
+      if (validItems.length > 0) {
+        localStorage.setItem(STORAGE_KEY_TDX_API_KEYS, JSON.stringify(validItems));
+        const firstEnabled = validItems.find((p) => p.isEnabled && p.clientId && p.clientSecret);
         if (firstEnabled) {
           localStorage.setItem("TDX_CLIENT_ID", firstEnabled.clientId);
           localStorage.setItem("TDX_CLIENT_SECRET", firstEnabled.clientSecret);
         }
         globalTdxKeyManager.reloadKeys();
-        return keysArray;
+        return validItems;
       }
     }
   } catch (e) {
@@ -384,9 +413,21 @@ export class TdxKeyRotationSystem {
     const builtInDefaults = [
       {
         id: "key-builtin-primary",
-        clientId: "lovefiy0903-f8d75808-3306-4327",
-        clientSecret: "3b2a8558-8fb3-43ec-ada7-14f59e3476b4",
-        label: "TDX 系統主要金鑰",
+        clientId: "jerry0903-d82c8d89-56b2-4628",
+        clientSecret: "5fdae95b-b2d6-4b80-a153-2238d6e74db5",
+        label: "TDX 系統主要金鑰 #1",
+      },
+      {
+        id: "key-builtin-backup-1",
+        clientId: "jerry0903-04044e4d-e59f-4e8d",
+        clientSecret: "d14df9b8-d005-4ce7-b7f5-5ac5fbb6d531",
+        label: "TDX 系統備援金鑰 #2",
+      },
+      {
+        id: "key-builtin-backup-2",
+        clientId: "jerry09032-2cdccf91-accf-4ea4",
+        clientSecret: "be155ae3-84ba-4e41-92c4-7037799d0e6a",
+        label: "TDX 系統備援金鑰 #3",
       },
     ];
 
@@ -428,9 +469,21 @@ export class TdxKeyRotationSystem {
     const builtInDefaults = [
       {
         id: "key-builtin-primary",
-        clientId: "lovefiy0903-f8d75808-3306-4327",
-        clientSecret: "3b2a8558-8fb3-43ec-ada7-14f59e3476b4",
-        label: "TDX 系統主要金鑰",
+        clientId: "jerry0903-d82c8d89-56b2-4628",
+        clientSecret: "5fdae95b-b2d6-4b80-a153-2238d6e74db5",
+        label: "TDX 系統主要金鑰 #1",
+      },
+      {
+        id: "key-builtin-backup-1",
+        clientId: "jerry0903-04044e4d-e59f-4e8d",
+        clientSecret: "d14df9b8-d005-4ce7-b7f5-5ac5fbb6d531",
+        label: "TDX 系統備援金鑰 #2",
+      },
+      {
+        id: "key-builtin-backup-2",
+        clientId: "jerry09032-2cdccf91-accf-4ea4",
+        clientSecret: "be155ae3-84ba-4e41-92c4-7037799d0e6a",
+        label: "TDX 系統備援金鑰 #3",
       },
     ];
     for (const b of builtInDefaults) {
